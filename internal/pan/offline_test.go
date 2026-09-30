@@ -14,6 +14,35 @@ func (roundTrip offlineRoundTrip) RoundTrip(request *http.Request) (*http.Respon
 	return roundTrip(request)
 }
 
+func TestRemoveOfflineRetainsSourceFiles(t *testing.T) {
+	client := New()
+	defer client.Close()
+	hash := strings.Repeat("a", 40)
+	calls := 0
+	client.http.SetTransport(offlineRoundTrip(func(request *http.Request) (*http.Response, error) {
+		calls++
+		if request.Method != http.MethodPost || request.URL.Path != "/open/offline/del_task" {
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if request.FormValue("info_hash") != hash || request.FormValue("del_source_file") != "0" {
+			t.Fatalf("history removal must retain source files: %v", request.Form)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"state":true,"code":0}`)), Request: request,
+		}, nil
+	}))
+	if err := client.RemoveOffline(t.Context(), "fixture-token", hash); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("history removal was sent %d times", calls)
+	}
+}
+
 func TestAddOfflineChecksTheIndividualSubmissionResult(t *testing.T) {
 	hash := strings.Repeat("a", 40)
 	for _, test := range []struct {

@@ -13,7 +13,7 @@ import (
 )
 
 // submit handles duplicate history by inspecting its real output. Only a
-// terminal task with confirmed absent video content is removed, never files.
+// terminal task without reusable video content in the library is removed, never files.
 // The caller holds the account/hash lock, never the shared Pan state lock.
 func (service *Service) submit(ctx context.Context, sess drive.Session, hash, directoryID string) (pan.OfflineTask, error) {
 	infoHash, err := sess.AddOffline(ctx, "magnet:?xt=urn:btih:"+hash)
@@ -39,7 +39,7 @@ func (service *Service) submit(ctx context.Context, sess drive.Session, hash, di
 	if remote.FileID == "" {
 		return pan.OfflineTask{}, domain.E(domain.KindConflict, "115 的历史任务未提供资源位置，请先在 115 客户端清理该任务记录", nil)
 	}
-	present, err := service.remoteHasVideo(ctx, sess, remote.FileID)
+	present, err := service.remoteHasLibraryVideo(ctx, sess, remote.FileID)
 	if err != nil {
 		return pan.OfflineTask{}, err
 	}
@@ -78,7 +78,7 @@ func (service *Service) findRemoteTask(ctx context.Context, sess drive.Session, 
 	return pan.OfflineTask{}, domain.E(domain.KindBusy, "115 提示任务已存在，但任务列表中未找到它，请稍后重试", nil)
 }
 
-func (service *Service) remoteHasVideo(ctx context.Context, sess drive.Session, id string) (bool, error) {
+func (service *Service) remoteHasLibraryVideo(ctx context.Context, sess drive.Session, id string) (bool, error) {
 	info, err := sess.Info(ctx, id)
 	if errors.Is(err, pan.ErrNotFound) {
 		return false, nil
@@ -88,7 +88,9 @@ func (service *Service) remoteHasVideo(ctx context.Context, sess drive.Session, 
 	}
 	source := sess.Source()
 	if !drive.WithinSource(info, source) {
-		return false, domain.E(domain.KindConflict, "该磁力的资源已在媒体目录之外，请先在 115 中移动资源", nil)
+		// Out-of-scope output cannot be reused for this library. Leave the files
+		// untouched and let submit replace only the history before downloading.
+		return false, nil
 	}
 	if !info.IsDirectory {
 		return domain.IsVideo(info.Name), nil
