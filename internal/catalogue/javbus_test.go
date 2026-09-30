@@ -32,7 +32,7 @@ func (s *recoveringJavBusSource) Find(_ context.Context, ref domain.MovieRef) ([
 	if ref.Code != "SSIS-001" || ref.JavDBID != "movie-1" {
 		return nil, errors.New("missing primary catalogue identity")
 	}
-	return []domain.Magnet{{Hash: "2222222222222222222222222222222222222222", Name: "supplement"}}, nil
+	return []domain.Magnet{{Hash: "2222222222222222222222222222222222222222", Name: "supplement", Sources: []string{domain.MagnetSourceJavBus}}}, nil
 }
 
 func TestMagnetsOptionalSourceFailureDoesNotCachePartialResults(t *testing.T) {
@@ -41,18 +41,24 @@ func TestMagnetsOptionalSourceFailureDoesNotCachePartialResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	primary := &stubProviderWithMagnets{magnets: []domain.Magnet{{Hash: "1111111111111111111111111111111111111111", Name: "primary"}}}
+	primary := &stubProviderWithMagnets{magnets: []domain.Magnet{{Hash: "1111111111111111111111111111111111111111", Name: "primary", Sources: []string{domain.MagnetSourceJavDB}}}}
 	supplement := &recoveringJavBusSource{}
 	service, err := NewWithClients(t.Context(), store.Client, primary, supplement, &stubLocalState{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer service.Close()
-	for _, want := range []int{1, 2, 2} {
-		magnets, err := service.Magnets(t.Context(), "movie-1")
-		if err != nil || len(magnets) != want {
-			t.Fatalf("magnets=%+v error=%v want=%d", magnets, err, want)
-		}
+	has, err := service.HasMagnet(t.Context(), "movie-1", primary.magnets[0].Hash)
+	if err != nil || !has {
+		t.Fatalf("primary magnet unavailable during partial failure: has=%v error=%v", has, err)
+	}
+	domainMagnets, err := service.CatalogueMagnets(t.Context(), "movie-1")
+	if err != nil || len(domainMagnets) != 2 {
+		t.Fatalf("domain lookup did not retry partial results: magnets=%+v error=%v", domainMagnets, err)
+	}
+	magnets, err := service.Magnets(t.Context(), "movie-1")
+	if err != nil || len(magnets) != 2 {
+		t.Fatalf("API lookup lost supplemented result: magnets=%+v error=%v", magnets, err)
 	}
 	if supplement.calls != 2 {
 		t.Fatalf("expected retry then cache hit, got %d upstream calls", supplement.calls)
@@ -81,7 +87,7 @@ func TestMagnetsRetriesDetailBeforeCachingSupplementedResult(t *testing.T) {
 	}
 	defer store.Close()
 	primary := &recoveringDetailProvider{stubProviderWithMagnets: stubProviderWithMagnets{
-		magnets: []domain.Magnet{{Hash: "1111111111111111111111111111111111111111", Name: "primary"}},
+		magnets: []domain.Magnet{{Hash: "1111111111111111111111111111111111111111", Name: "primary", Sources: []string{domain.MagnetSourceJavDB}}},
 	}}
 	upstream := &countingJavBusHTTP{}
 	service, err := NewWithClients(t.Context(), store.Client, primary, javbus.NewForTest(true, upstream), &stubLocalState{})
@@ -128,7 +134,7 @@ func TestMagnets_WithAvailableJavBus(t *testing.T) {
 
 	provider := &detailCountingProvider{
 		stubProviderWithMagnets: stubProviderWithMagnets{
-			magnets: []domain.Magnet{{Hash: "1111111111111111111111111111111111111111", Name: "SSIS-001"}},
+			magnets: []domain.Magnet{{Hash: "1111111111111111111111111111111111111111", Name: "SSIS-001", Sources: []string{domain.MagnetSourceJavDB}}},
 		},
 	}
 	upstream := &countingJavBusHTTP{}
@@ -178,7 +184,7 @@ func TestMagnets_WithUnavailableJavBus(t *testing.T) {
 
 	provider := &detailCountingProvider{
 		stubProviderWithMagnets: stubProviderWithMagnets{
-			magnets: []domain.Magnet{{Hash: "1111111111111111111111111111111111111111", Name: "SSIS-001"}},
+			magnets: []domain.Magnet{{Hash: "1111111111111111111111111111111111111111", Name: "SSIS-001", Sources: []string{domain.MagnetSourceJavDB}}},
 		},
 	}
 	javbusClient := javbus.NewForTest(false)
