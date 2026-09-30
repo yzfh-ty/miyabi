@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronLeftIcon, ChevronRightIcon, DownloadCloudIcon, LoaderCircleIcon } from 'lucide-react'
+import { ChevronLeftIcon, ChevronRightIcon, CloudDownloadIcon, LoaderCircleIcon } from 'lucide-react'
 
 import {
   type PanDirectory,
@@ -45,7 +45,7 @@ export function PanSidecarSync({ accountID, parent }: { accountID: string; paren
     interval_minutes: 30
   }
   const selected = useMemo(
-    () => new Map(current.child_directories.map(directory => [directory.id, directory])),
+    () => new Map(current.child_directories.map(directory => [directory.id, directory] as const)),
     [current.child_directories]
   )
   const isDirty = Boolean(form && config.data && (
@@ -125,7 +125,7 @@ export function PanSidecarSync({ accountID, parent }: { accountID: string; paren
           </span>
         ) : null}
         <Button type="button" variant="outline" size="sm" disabled={busy || isDirty || !config.data?.enabled || selected.size === 0} onClick={() => run.mutate()}>
-          {run.isPending ? <LoaderCircleIcon className="mr-1.5 size-3.5 animate-spin" /> : <DownloadCloudIcon className="mr-1.5 size-3.5" />}
+          {run.isPending ? <LoaderCircleIcon className="mr-1.5 size-3.5 animate-spin" /> : <CloudDownloadIcon className="mr-1.5 size-3.5" />}
           立即同步
         </Button>
         <Button type="button" size="sm" disabled={busy || !isDirty} onClick={save}>
