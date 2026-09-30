@@ -18,10 +18,10 @@ import { SettingRow } from './shared'
 
 export function PanSidecarSync({ accountID, parent }: { accountID: string; parent: PanDirectory }) {
   const config = usePanSidecarSyncConfig()
+  const [page, setPage] = useState(1)
   const files = usePanFiles(accountID, parent.id, page)
   const update = useUpdatePanSidecarSync()
   const run = useRunPanSidecarSync()
-  const [page, setPage] = useState(1)
   const [form, setForm] = useState<Pick<PanSidecarSyncConfig,
     'enabled' | 'destination' | 'child_directories' | 'interval_minutes'> | null>(null)
 
