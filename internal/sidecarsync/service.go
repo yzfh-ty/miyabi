@@ -17,6 +17,7 @@ import (
 	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/drive"
 	"github.com/ppxb/miyabi/internal/ent"
+	"github.com/ppxb/miyabi/internal/export"
 	"github.com/ppxb/miyabi/internal/pan"
 )
 
@@ -41,6 +42,7 @@ type Config struct {
 	LastRunAt        *time.Time  `json:"last_run_at,omitempty"`
 	LastResult       string      `json:"last_result,omitempty"`
 	FilesDownloaded  int         `json:"files_downloaded"`
+	FilesGenerated   int         `json:"files_generated"`
 	FilesSkipped     int         `json:"files_skipped"`
 	Errors           []string    `json:"errors,omitempty"`
 }
@@ -53,14 +55,22 @@ type Update struct {
 }
 
 type Service struct {
-	db    *ent.Client
-	drive *drive.Drive
-	log   *slog.Logger
-	mu    sync.Mutex
+	db        *ent.Client
+	drive     *drive.Drive
+	exportMgr *export.Manager
+	log       *slog.Logger
+	mu        sync.Mutex
 }
 
-func New(db *ent.Client, d *drive.Drive, logger *slog.Logger) *Service {
-	return &Service{db: db, drive: d, log: logger}
+func New(db *ent.Client, d *drive.Drive, exportMgr *export.Manager, logger *slog.Logger) *Service {
+	return &Service{db: db, drive: d, exportMgr: exportMgr, log: logger}
+}
+
+type syncResult struct {
+	downloaded int
+	generated  int
+	skipped    int
+	failures   []string
 }
 
 func (s *Service) Config(ctx context.Context) (Config, error) {
@@ -169,29 +179,28 @@ func (s *Service) syncLocked(ctx context.Context, config Config) error {
 		Directory: domain.LibraryDirectory{ID: config.ParentID},
 	})
 	if err != nil {
-		return s.finish(ctx, config, 0, 0, []string{err.Error()}, err)
+		return s.finish(ctx, config, syncResult{failures: []string{err.Error()}}, err)
 	}
 	if !filepath.IsAbs(config.Destination) {
 		err := errors.New("sidecar sync destination must be absolute")
-		return s.finish(ctx, config, 0, 0, []string{err.Error()}, err)
+		return s.finish(ctx, config, syncResult{failures: []string{err.Error()}}, err)
 	}
 	rootEntries, err := drive.DirectoryEntries(ctx, sess, config.ParentID)
 	if err != nil {
-		return s.finish(ctx, config, 0, 0, []string{err.Error()}, err)
+		return s.finish(ctx, config, syncResult{failures: []string{err.Error()}}, err)
 	}
 	selected := make(map[string]Directory, len(config.ChildDirectories))
 	for _, child := range config.ChildDirectories {
 		selected[child.ID] = child
 	}
-	downloaded, skipped := 0, 0
-	var failures []string
+	var result syncResult
 	for _, entry := range rootEntries {
 		child, ok := selected[entry.ID]
 		if !ok {
 			continue
 		}
 		if !entry.IsDirectory {
-			failures = append(failures, fmt.Sprintf("选中的目录 %s 已不再是文件夹", child.Name))
+			result.failures = append(result.failures, fmt.Sprintf("选中的目录 %s 已不再是文件夹", child.Name))
 			continue
 		}
 		info, err := drive.SourceInfo(ctx, sess, entry.ID)
@@ -199,29 +208,29 @@ func (s *Service) syncLocked(ctx context.Context, config Config) error {
 			if err == nil {
 				err = errors.New("directory is no longer a direct child of the mounted directory")
 			}
-			failures = append(failures, fmt.Sprintf("%s: %v", child.Name, err))
+			result.failures = append(result.failures, fmt.Sprintf("%s: %v", child.Name, err))
 			continue
 		}
-		if err := s.walk(ctx, sess, config.Destination, child.ID, child.Path, &downloaded, &skipped, &failures); err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", child.Name, err))
+		if err := s.walk(ctx, sess, config.Destination, child.ID, child.Path, &result); err != nil {
+			result.failures = append(result.failures, fmt.Sprintf("%s: %v", child.Name, err))
 		}
 	}
 	for id, child := range selected {
 		if !slices.ContainsFunc(rootEntries, func(entry pan.File) bool { return entry.ID == id && entry.IsDirectory }) {
-			failures = append(failures, fmt.Sprintf("同步目录 %s 已从挂载目录移除", child.Name))
+			result.failures = append(result.failures, fmt.Sprintf("同步目录 %s 已从挂载目录移除", child.Name))
 		}
 	}
 	var runErr error
-	if len(failures) > 0 {
-		runErr = fmt.Errorf("sidecar sync completed with %d errors", len(failures))
+	if len(result.failures) > 0 {
+		runErr = fmt.Errorf("sidecar sync completed with %d errors", len(result.failures))
 	}
-	if len(failures) > 20 {
-		failures = append(failures[:20], fmt.Sprintf("还有 %d 条错误未显示", len(failures)-20))
+	if len(result.failures) > 20 {
+		result.failures = append(result.failures[:20], fmt.Sprintf("还有 %d 条错误未显示", len(result.failures)-20))
 	}
-	return s.finish(ctx, config, downloaded, skipped, failures, runErr)
+	return s.finish(ctx, config, result, runErr)
 }
 
-func (s *Service) walk(ctx context.Context, sess drive.Session, root, dirID, relative string, downloaded, skipped *int, failures *[]string) error {
+func (s *Service) walk(ctx context.Context, sess drive.Session, root, dirID, relative string, result *syncResult) error {
 	if !safeRelative(relative) {
 		return fmt.Errorf("invalid relative path %q", relative)
 	}
@@ -229,19 +238,24 @@ func (s *Service) walk(ctx context.Context, sess drive.Session, root, dirID, rel
 	if err != nil {
 		return err
 	}
+	var videos []pan.File
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		childRelative := filepath.Join(relative, entry.Name)
 		if !safeRelative(childRelative) {
-			*failures = append(*failures, fmt.Sprintf("%s: invalid relative path", childRelative))
+			result.failures = append(result.failures, fmt.Sprintf("%s: invalid relative path", childRelative))
 			continue
 		}
 		if entry.IsDirectory {
-			if err := s.walk(ctx, sess, root, entry.ID, childRelative, downloaded, skipped, failures); err != nil {
-				*failures = append(*failures, fmt.Sprintf("%s: %v", childRelative, err))
+			if err := s.walk(ctx, sess, root, entry.ID, childRelative, result); err != nil {
+				result.failures = append(result.failures, fmt.Sprintf("%s: %v", childRelative, err))
 			}
+			continue
+		}
+		if domain.IsVideo(entry.Name) {
+			videos = append(videos, entry)
 			continue
 		}
 		if !sidecarFile(entry.Name) {
@@ -249,16 +263,51 @@ func (s *Service) walk(ctx context.Context, sess drive.Session, root, dirID, rel
 		}
 		wasDownloaded, err := s.syncFile(ctx, sess, root, childRelative, entry)
 		if err != nil {
-			*failures = append(*failures, fmt.Sprintf("%s: %v", childRelative, err))
+			result.failures = append(result.failures, fmt.Sprintf("%s: %v", childRelative, err))
 			continue
 		}
 		if wasDownloaded {
-			*downloaded++
+			result.downloaded++
 		} else {
-			*skipped++
+			result.skipped++
+		}
+	}
+	// Publish STRMs after the directory's existing metadata has been synced.
+	for _, video := range videos {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		videoRelative := filepath.Join(relative, video.Name)
+		generated, err := s.generateSTRM(root, videoRelative, video.ID)
+		if err != nil {
+			result.failures = append(result.failures, fmt.Sprintf("%s: %v", videoRelative, err))
+			continue
+		}
+		if generated {
+			result.generated++
+		} else {
+			result.skipped++
 		}
 	}
 	return nil
+}
+
+func (s *Service) generateSTRM(root, videoRelative, fileID string) (bool, error) {
+	relative := strings.TrimSuffix(videoRelative, filepath.Ext(videoRelative)) + ".strm"
+	if !safeRelative(relative) {
+		return false, fmt.Errorf("invalid relative path %q", relative)
+	}
+	target, err := ensureLocalTarget(root, relative)
+	if err != nil {
+		return false, err
+	}
+	var generated bool
+	err = s.exportMgr.WithConfig(func(cfg export.Config) error {
+		var err error
+		generated, err = writeNewFile(target, export.STRMContent(cfg.PublicURL, fileID, cfg.STRMToken))
+		return err
+	})
+	return generated, err
 }
 
 func (s *Service) syncFile(ctx context.Context, sess drive.Session, root, relative string, entry pan.File) (bool, error) {
@@ -283,6 +332,16 @@ func (s *Service) syncFile(ctx context.Context, sess drive.Session, root, relati
 	}
 	if entry.SHA1 != "" && !strings.EqualFold(pan.SHA1(body), entry.SHA1) {
 		return false, fmt.Errorf("downloaded SHA1 does not match 115")
+	}
+	return writeNewFile(target, body)
+}
+
+// writeNewFile publishes a complete file without replacing an existing target.
+func writeNewFile(target string, body []byte) (bool, error) {
+	if _, err := os.Lstat(target); err == nil {
+		return false, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return false, err
 	}
 	temp, err := os.CreateTemp(filepath.Dir(target), ".sidecar-sync-*")
 	if err != nil {
@@ -365,12 +424,13 @@ func sidecarFile(name string) bool {
 	}
 }
 
-func (s *Service) finish(ctx context.Context, config Config, downloaded, skipped int, failures []string, runErr error) error {
+func (s *Service) finish(ctx context.Context, config Config, result syncResult, runErr error) error {
 	now := time.Now().UTC()
 	config.LastRunAt = &now
-	config.FilesDownloaded = downloaded
-	config.FilesSkipped = skipped
-	config.Errors = failures
+	config.FilesDownloaded = result.downloaded
+	config.FilesGenerated = result.generated
+	config.FilesSkipped = result.skipped
+	config.Errors = result.failures
 	config.LastResult = "success"
 	if runErr != nil {
 		config.LastResult = runErr.Error()
@@ -379,7 +439,7 @@ func (s *Service) finish(ctx context.Context, config Config, downloaded, skipped
 		return errors.Join(runErr, err)
 	}
 	if runErr != nil && s.log != nil {
-		s.log.WarnContext(ctx, "115 sidecar sync completed with errors", "downloaded", downloaded, "skipped", skipped, "errors", failures)
+		s.log.WarnContext(ctx, "115 sidecar sync completed with errors", "downloaded", result.downloaded, "generated", result.generated, "skipped", result.skipped, "errors", result.failures)
 	}
 	return runErr
 }

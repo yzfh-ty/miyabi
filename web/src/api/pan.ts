@@ -56,6 +56,7 @@ export type PanSidecarSyncConfig = {
   last_run_at?: string
   last_result?: string
   files_downloaded: number
+  files_generated: number
   files_skipped: number
   errors?: string[]
 }

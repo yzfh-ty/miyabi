@@ -90,18 +90,18 @@ export function PanSidecarSync({ accountID, parent }: { accountID: string; paren
 
   return (
     <div className="space-y-4 rounded-md border p-4">
-      <div className="text-sm font-medium">115 旁挂 NFO 与图片同步</div>
-      <SettingRow title="启用同步" description="只下载所选子目录内的 NFO 和图片；本地已有文件始终跳过" inline>
+      <div className="text-sm font-medium">115 STRM 与元数据同步</div>
+      <SettingRow title="启用同步" description="保留所选目录结构，为视频生成同名 STRM，并同步已有 NFO 和图片；本地已有文件始终跳过" inline>
         <Switch checked={current.enabled} disabled={busy || config.isError} onCheckedChange={value => change('enabled', value)} />
       </SettingRow>
-      <SettingRow title="本地同步目录" description="填写运行 Miyabi 的服务器上的绝对路径">
+      <SettingRow title="本地同步目录" description="填写服务器上的绝对路径；STRM 使用 Emby 设置中的对外地址">
         <Input value={current.destination} disabled={busy || config.isError} placeholder="/data/115-sidecars" onChange={event => change('destination', event.target.value)} />
       </SettingRow>
       <SettingRow title="同步间隔（分钟）" description="每隔指定时间检查白名单目录，默认 30 分钟">
         <Input type="number" min={1} max={1440} value={current.interval_minutes} disabled={busy || config.isError} onChange={event => change('interval_minutes', Number(event.target.value))} />
       </SettingRow>
       <div className="space-y-2">
-        <div className="text-xs text-muted-foreground">选择挂载目录的直接子目录；未选择的目录及其内容不会下载。</div>
+        <div className="text-xs text-muted-foreground">选择挂载目录的直接子目录，递归同步其内容；未选择的目录不会处理。</div>
         {files.isLoading ? <LoaderCircleIcon className="size-4 animate-spin text-muted-foreground" /> : null}
         {files.isError ? <InlineError>无法读取挂载目录，请检查 115 连接后重试。</InlineError> : null}
         {folders.map(folder => (
@@ -121,7 +121,7 @@ export function PanSidecarSync({ accountID, parent }: { accountID: string; paren
       <div className="flex flex-wrap items-center justify-end gap-2">
         {config.data?.last_run_at ? (
           <span className="mr-auto text-xs text-muted-foreground">
-            最近同步：{new Date(config.data.last_run_at).toLocaleString()} · 下载 {config.data.files_downloaded} · 跳过 {config.data.files_skipped}
+            最近同步：{new Date(config.data.last_run_at).toLocaleString()} · 下载 {config.data.files_downloaded} · 生成 STRM {config.data.files_generated ?? 0} · 跳过 {config.data.files_skipped}
           </span>
         ) : null}
         <Button type="button" variant="outline" size="sm" disabled={busy || isDirty || !config.data?.enabled || selected.size === 0} onClick={() => run.mutate()}>
