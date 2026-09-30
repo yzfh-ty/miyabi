@@ -39,12 +39,31 @@ export type PanAccountStatus = {
   directory?: PanDirectory
 }
 
-type PanFilePage = {
-  files: { id: string; name: string; is_directory: boolean }[]
+export type PanFilePage = {
+  files: { id: string; parent_id: string; name: string; is_directory: boolean; size: number; sha1: string }[]
   path: { id: string; name: string }[]
   total: number
   has_more: boolean
 }
+
+export type PanSidecarSyncConfig = {
+  enabled: boolean
+  account_id: string
+  parent_id: string
+  destination: string
+  child_directories: PanDirectory[]
+  interval_minutes: number
+  last_run_at?: string
+  last_result?: string
+  files_downloaded: number
+  files_skipped: number
+  errors?: string[]
+}
+
+export type PanSidecarSyncUpdate = Pick<
+  PanSidecarSyncConfig,
+  'enabled' | 'destination' | 'child_directories' | 'interval_minutes'
+>
 
 export type PanLoginSession = {
   id: string
@@ -61,8 +80,36 @@ export const panKeys = {
   account: ['pan', 'account'] as const,
   login: (id: string) => ['pan', 'login', id] as const,
   fileLists: ['pan', 'files'] as const,
+  sidecarSync: ['pan', 'sidecar-sync'] as const,
   files: (accountID: string, directoryID: string, page: number) =>
     ['pan', 'files', accountID, directoryID, page] as const
+}
+
+export function usePanSidecarSyncConfig() {
+  return useQuery({
+    queryKey: panKeys.sidecarSync,
+    queryFn: ({ signal }) =>
+      apiGet<PanSidecarSyncConfig>('/api/pan/sidecar-sync', undefined, signal),
+    refetchOnMount: 'always'
+  })
+}
+
+export function useUpdatePanSidecarSync() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (config: PanSidecarSyncUpdate) =>
+      apiPut<PanSidecarSyncConfig>('/api/pan/sidecar-sync', config),
+    onSuccess: config => queryClient.setQueryData(panKeys.sidecarSync, config)
+  })
+}
+
+export function useRunPanSidecarSync() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiPost<PanSidecarSyncConfig>('/api/pan/sidecar-sync/run'),
+    onSuccess: config => queryClient.setQueryData(panKeys.sidecarSync, config),
+    onError: () => void queryClient.invalidateQueries({ queryKey: panKeys.sidecarSync })
+  })
 }
 
 export function invalidatePanSource(queryClient: QueryClient) {

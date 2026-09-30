@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { PanLoginDialog } from './pan-login-dialog'
 import { PanDirectoryRow } from './pan-directory-row'
+import { PanSidecarSync } from './pan-sidecar-sync'
 import { PanAccountInfo, PanStorageUsage } from './pan-account'
 import { SettingRow, SettingsSection } from './shared'
 
@@ -105,6 +106,9 @@ export function PanSection() {
             directory={account.data?.directory}
             disabled={account.isError || disconnect.isPending}
           />
+          {account.data?.directory ? (
+            <PanSidecarSync key={`${profile.id}:${account.data.directory.id}`} accountID={profile.id} parent={account.data.directory} />
+          ) : null}
           <PanStorageUsage space={profile.space} />
         </>
       ) : null}

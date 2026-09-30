@@ -23,6 +23,7 @@ type Dependencies struct {
 	Access         AccessGate
 	Catalogue      CatalogueManager
 	Drive          DriveManager
+	SidecarSync    SidecarSyncManager
 	Offline        OfflineManager
 	Monitor        SubscriptionManager
 	Library        LibraryManager
@@ -126,6 +127,9 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	panAPI.GET("/files", panFilesHandler(deps.Drive))
 	panAPI.PUT("/directory", panSelectDirectoryHandler(deps.Drive))
 	panAPI.DELETE("/directory", panClearDirectoryHandler(deps.Drive))
+	panAPI.GET("/sidecar-sync", sidecarSyncConfigHandler(deps.SidecarSync))
+	panAPI.PUT("/sidecar-sync", sidecarSyncUpdateHandler(deps.SidecarSync))
+	panAPI.POST("/sidecar-sync/run", sidecarSyncNowHandler(deps.SidecarSync))
 
 	if deps.Frontend != nil {
 		installFrontend(router, deps.Frontend)

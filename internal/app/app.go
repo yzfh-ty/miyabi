@@ -27,14 +27,16 @@ import (
 	"github.com/ppxb/miyabi/internal/network"
 	"github.com/ppxb/miyabi/internal/netx"
 	"github.com/ppxb/miyabi/internal/offline"
+	"github.com/ppxb/miyabi/internal/sidecarsync"
 	"github.com/ppxb/miyabi/internal/strm"
 	"github.com/ppxb/miyabi/internal/subtitle"
 	"github.com/ppxb/miyabi/internal/tasks"
 )
 
 const (
-	offlineSyncInterval  = 30 * time.Second
-	monitorCheckInterval = 5 * time.Minute
+	offlineSyncInterval     = 30 * time.Second
+	monitorCheckInterval    = 5 * time.Minute
+	sidecarSyncTickInterval = time.Minute
 	// Bound a remote offline submission after detaching from its caller.
 	offlineSubmitTimeout = 2 * time.Minute
 )
@@ -52,6 +54,7 @@ type App struct {
 	catalogue *catalogue.Service
 	scrape    *scrape.Service
 	embySvc   *emby.Service
+	sidecars  *sidecarsync.Service
 }
 
 // New initializes all services, database connections, and registers task handlers.
@@ -138,6 +141,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		_ = store.Close()
 		return nil, fmt.Errorf("initialize maintenance service: %w", err)
 	}
+	sidecarSyncSvc := sidecarsync.New(store.Client, driveSvc, logger)
 
 	if err := libSvc.ScheduleLocalScan(ctx); err != nil {
 		logger.ErrorContext(ctx, "failed to queue startup Emby directory scan", "error", err)
@@ -159,6 +163,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		Access:         api.NewAccessGateService(cfg.AccessPassword, cfg.JWTSecret),
 		Catalogue:      catalogueSvc,
 		Drive:          driveSvc,
+		SidecarSync:    sidecarSyncSvc,
 		Offline:        offlineSvc,
 		Monitor:        monitorSvc,
 		Library:        libSvc,
@@ -192,6 +197,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		catalogue: catalogueSvc,
 		scrape:    scrapeSvc,
 		embySvc:   embySvc,
+		sidecars:  sidecarSyncSvc,
 	}, nil
 }
 
@@ -205,7 +211,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	var workers sync.WaitGroup
 	poolError := make(chan error, len(a.pools))
-	workers.Add(len(a.pools) + 2)
+	workers.Add(len(a.pools) + 3)
 	for _, pool := range a.pools {
 		go func() {
 			defer workers.Done()
@@ -219,6 +225,10 @@ func (a *App) Run(ctx context.Context) error {
 	go func() {
 		defer workers.Done()
 		tasks.RunPeriodic(ctx, a.logger, "monitor", monitorCheckInterval, a.monitors.Pending(), a.monitors.Check)
+	}()
+	go func() {
+		defer workers.Done()
+		tasks.RunPeriodic(ctx, a.logger, "sync 115 sidecar files", sidecarSyncTickInterval, nil, a.sidecars.Tick)
 	}()
 
 	serverError := make(chan error, 1)
