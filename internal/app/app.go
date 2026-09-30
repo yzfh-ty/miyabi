@@ -141,7 +141,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		_ = store.Close()
 		return nil, fmt.Errorf("initialize maintenance service: %w", err)
 	}
-	sidecarSyncSvc := sidecarsync.New(store.Client, driveSvc, exportMgr, logger)
+	sidecarSyncSvc := sidecarsync.New(store.Client, driveSvc, exportMgr, embySvc, logger)
 	libSvc.SetMetadataSyncer(sidecarSyncSvc)
 
 	if err := libSvc.ScheduleLocalScan(ctx); err != nil {

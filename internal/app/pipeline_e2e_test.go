@@ -414,7 +414,7 @@ func TestPipelineScansScrapesAndWritesSidecarsEndToEnd(t *testing.T) {
 	}
 
 	// Sidecars land in the local Emby directory under prefix bucket
-	embyMovieDir := filepath.Join(fixture.embyDir, "ABP", "ABP-123")
+	embyMovieDir := filepath.Join(fixture.embyDir, "miyabi", "ABP", "ABP-123")
 	strmBytes, err := os.ReadFile(filepath.Join(embyMovieDir, "ABP-123.strm"))
 	if err != nil {
 		t.Fatalf("local strm file not found: %v", err)

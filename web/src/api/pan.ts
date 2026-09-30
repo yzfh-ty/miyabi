@@ -40,7 +40,14 @@ export type PanAccountStatus = {
 }
 
 export type PanFilePage = {
-  files: { id: string; parent_id: string; name: string; is_directory: boolean; size: number; sha1: string }[]
+  files: {
+    id: string
+    parent_id: string
+    name: string
+    is_directory: boolean
+    size: number
+    sha1: string
+  }[]
   path: { id: string; name: string }[]
   total: number
   has_more: boolean
@@ -51,6 +58,7 @@ export type PanSidecarSyncConfig = {
   account_id: string
   parent_id: string
   destination: string
+  default_destination: string
   download_directory: PanDirectory
   child_directories: (PanDirectory & { mode?: 'scrape' | 'sync' })[]
   interval_minutes: number

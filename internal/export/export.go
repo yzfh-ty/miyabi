@@ -18,6 +18,9 @@ import (
 
 const defaultEmbyDir = "./data/emby"
 
+// ManagedDirectory separates Miyabi exports from media synced with original paths.
+const ManagedDirectory = "miyabi"
+
 // STRMPlayPath is the API route prefix for media streaming playback in .strm files.
 const STRMPlayPath = "/api/strm/play/"
 
@@ -37,12 +40,12 @@ func defaultPublicURL() string {
 }
 
 // EmbyMovieDir is the directory holding a movie's exported Emby files,
-// bucketed by catalogue prefix: <embyDir>/<prefix>/<safe-stem>.
+// bucketed by catalogue prefix: <embyDir>/miyabi/<prefix>/<safe-stem>.
 func EmbyMovieDir(embyDir, code string) string {
 	if embyDir == "" {
 		embyDir = defaultEmbyDir
 	}
-	return filepath.Join(embyDir, nfo.FileStem(codeid.Prefix(code)), nfo.FileStem(code))
+	return filepath.Join(embyDir, ManagedDirectory, nfo.FileStem(codeid.Prefix(code)), nfo.FileStem(code))
 }
 
 // STRMContent is the body of a .strm file: the relay URL that resolves the

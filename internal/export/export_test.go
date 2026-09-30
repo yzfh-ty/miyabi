@@ -124,6 +124,23 @@ func TestExportManager(t *testing.T) {
 	}
 }
 
+func TestConfigRootDir(t *testing.T) {
+	for _, dir := range []string{"", "./data/emby", "  ./custom-emby  ", t.TempDir()} {
+		input := strings.TrimSpace(dir)
+		if input == "" {
+			input = "./data/emby"
+		}
+		want, err := filepath.Abs(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := (Config{EmbyDir: dir}).RootDir()
+		if err != nil || got != want {
+			t.Errorf("RootDir(%q) = %q, %v; want %q", dir, got, err, want)
+		}
+	}
+}
+
 func TestEmbyMovieDir(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -132,12 +149,12 @@ func TestEmbyMovieDir(t *testing.T) {
 		code    string
 		wantRel string
 	}{
-		{"", "SSIS-001", filepath.Join("./data/emby", "SSIS", "SSIS-001")},
-		{tempDir, "ALDN-613", filepath.Join(tempDir, "ALDN", "ALDN-613")},
-		{tempDir, "A/B", filepath.Join(tempDir, "OTHERS", "A%2FB")},
-		{tempDir, `A\B`, filepath.Join(tempDir, "OTHERS", "A%5CB")},
-		{tempDir, "ABC:001", filepath.Join(tempDir, "OTHERS", "ABC%3A001")},
-		{tempDir, "作品/限定 #007", filepath.Join(tempDir, "OTHERS", nfo.FileStem("作品/限定 #007"))},
+		{"", "SSIS-001", filepath.Join("./data/emby", "miyabi", "SSIS", "SSIS-001")},
+		{tempDir, "ALDN-613", filepath.Join(tempDir, "miyabi", "ALDN", "ALDN-613")},
+		{tempDir, "A/B", filepath.Join(tempDir, "miyabi", "OTHERS", "A%2FB")},
+		{tempDir, `A\B`, filepath.Join(tempDir, "miyabi", "OTHERS", "A%5CB")},
+		{tempDir, "ABC:001", filepath.Join(tempDir, "miyabi", "OTHERS", "ABC%3A001")},
+		{tempDir, "作品/限定 #007", filepath.Join(tempDir, "miyabi", "OTHERS", nfo.FileStem("作品/限定 #007"))},
 	} {
 		got := EmbyMovieDir(tc.embyDir, tc.code)
 		if got != tc.wantRel {
@@ -149,7 +166,7 @@ func TestEmbyMovieDir(t *testing.T) {
 		if filepath.Base(got) != nfo.FileStem(tc.code) {
 			t.Errorf("expected leaf dir to be %q, got %q", nfo.FileStem(tc.code), filepath.Base(got))
 		}
-		if tc.embyDir != "" && filepath.Dir(prefixDir) != tc.embyDir {
+		if tc.embyDir != "" && filepath.Dir(prefixDir) != filepath.Join(tc.embyDir, "miyabi") {
 			t.Errorf("expected parent to be prefix under %q, got %q", tc.embyDir, prefixDir)
 		}
 
@@ -167,7 +184,7 @@ func TestEmbyMovieDirStaysWithinRoot(t *testing.T) {
 	for _, code := range []string{"../../ABC-001", `..\..\ABC-001`, "A/B-001", ".", "..", "..-001"} {
 		got := EmbyMovieDir(root, code)
 		rel, err := filepath.Rel(root, got)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.Dir(filepath.Dir(got)) != root {
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.Dir(filepath.Dir(got)) != filepath.Join(root, "miyabi") {
 			t.Errorf("unsafe export path for %q: %s (%v)", code, got, err)
 		}
 	}

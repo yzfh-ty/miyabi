@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/pan"
@@ -128,10 +129,20 @@ func TestDirectoryEntries_CacheAndExpiration(t *testing.T) {
 }
 
 func TestVerifyVideoPositions(t *testing.T) {
-	service := &Service{}
+	store, err := database.Open(t.Context(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	service := &Service{db: store.Client}
 	source := domain.LibrarySource{
 		AccountID: "acc-1",
 		Directory: domain.LibraryDirectory{ID: "10"},
+	}
+	if err := database.SaveSetting(t.Context(), store.Client, database.PanDirectorySettingsKey, domain.DirectoryPolicy{
+		AccountID: source.AccountID, ParentID: source.Directory.ID, DownloadDirectory: source.Directory,
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	dir := MovieDirectory{

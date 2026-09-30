@@ -38,7 +38,7 @@ func TestExportLocalMediaSingleVideo(t *testing.T) {
 		t.Fatalf("exportLocalMedia failed: %v", err)
 	}
 
-	movieDir := filepath.Join(tempDir, "IPX", "IPX-123")
+	movieDir := filepath.Join(tempDir, "miyabi", "IPX", "IPX-123")
 
 	// 1. Check STRM
 	strmPath := filepath.Join(movieDir, "IPX-123.strm")
@@ -103,7 +103,7 @@ func TestExportLocalMediaMultiVideo(t *testing.T) {
 		t.Fatalf("exportLocalMedia failed: %v", err)
 	}
 
-	movieDir := filepath.Join(tempDir, "SSIS", "SSIS-456")
+	movieDir := filepath.Join(tempDir, "miyabi", "SSIS", "SSIS-456")
 
 	cd1Content, err := os.ReadFile(filepath.Join(movieDir, "SSIS-456-cd1.strm"))
 	if err != nil {
@@ -150,7 +150,7 @@ func TestExportLocalMediaMultiVideoUnsorted(t *testing.T) {
 		t.Fatalf("exportLocalMedia failed: %v", err)
 	}
 
-	movieDir := filepath.Join(tempDir, "SSIS", "SSIS-456")
+	movieDir := filepath.Join(tempDir, "miyabi", "SSIS", "SSIS-456")
 
 	cd1Content, err := os.ReadFile(filepath.Join(movieDir, "SSIS-456-cd1.strm"))
 	if err != nil {

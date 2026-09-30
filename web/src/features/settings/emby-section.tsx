@@ -228,6 +228,15 @@ export function EmbySection() {
         />
       </SettingRow>
 
+      <SettingRow
+        title="本地媒体输出目录"
+        description="STRM 与元数据默认在此保留 115 原目录结构；项目刮削结果存放在 miyabi/番号前缀/番号 下。Emby 需挂载并扫描此目录。"
+      >
+        <div className="text-sm break-all">
+          {config?.local_dir || '默认使用数据目录下的 emby 子目录'}
+        </div>
+      </SettingRow>
+
       <div className="flex items-center justify-end gap-2">
         <Button
           type="button"

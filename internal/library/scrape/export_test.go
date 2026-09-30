@@ -84,7 +84,7 @@ func TestExportLocalMovie_ScrapedRecordExportsMissingSidecars(t *testing.T) {
 	}
 
 	// Simulate fast STRM already written, but NFO and poster missing
-	aldnDir := filepath.Join(embyDir, "ALDN", "ALDN-613")
+	aldnDir := filepath.Join(embyDir, "miyabi", "ALDN", "ALDN-613")
 	if err := os.MkdirAll(aldnDir, 0o755); err != nil {
 		t.Fatalf("mkdir aldn: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestExportEmbyMedia_WritesSTRMLast(t *testing.T) {
 		t.Fatalf("ExportEmbyMedia failed: %v", err)
 	}
 
-	movieDir := filepath.Join(embyDir, "SSIS", "SSIS-999")
+	movieDir := filepath.Join(embyDir, "miyabi", "SSIS", "SSIS-999")
 	posterStat, err := os.Stat(filepath.Join(movieDir, "poster.jpg"))
 	if err != nil {
 		t.Fatalf("poster not found: %v", err)
@@ -330,7 +330,7 @@ func TestExportEmbyMedia_CleansObsoleteSTRM(t *testing.T) {
 		t.Fatalf("first export failed: %v", err)
 	}
 
-	movieDir := filepath.Join(embyDir, "MIDE", "MIDE-123")
+	movieDir := filepath.Join(embyDir, "miyabi", "MIDE", "MIDE-123")
 	if _, err := os.Stat(filepath.Join(movieDir, "MIDE-123.strm")); err != nil {
 		t.Fatalf("expected MIDE-123.strm to exist: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestExportEmbyMedia_MultiVideoOrder(t *testing.T) {
 		t.Fatalf("ExportEmbyMedia failed: %v", err)
 	}
 
-	movieDir := filepath.Join(embyDir, "STARS", "STARS-001")
+	movieDir := filepath.Join(embyDir, "miyabi", "STARS", "STARS-001")
 	cd1Bytes, err := os.ReadFile(filepath.Join(movieDir, "STARS-001-cd1.strm"))
 	if err != nil {
 		t.Fatalf("cd1 strm missing: %v", err)

@@ -35,19 +35,20 @@ type Directory struct {
 }
 
 type Config struct {
-	Enabled           bool                    `json:"enabled"`
-	AccountID         string                  `json:"account_id"`
-	ParentID          string                  `json:"parent_id"`
-	Destination       string                  `json:"destination"`
-	DownloadDirectory domain.LibraryDirectory `json:"download_directory"`
-	ChildDirectories  []Directory             `json:"child_directories"`
-	IntervalMinutes   int                     `json:"interval_minutes"`
-	LastRunAt         *time.Time              `json:"last_run_at,omitempty"`
-	LastResult        string                  `json:"last_result,omitempty"`
-	FilesDownloaded   int                     `json:"files_downloaded"`
-	FilesGenerated    int                     `json:"files_generated"`
-	FilesSkipped      int                     `json:"files_skipped"`
-	Errors            []string                `json:"errors,omitempty"`
+	Enabled            bool                    `json:"enabled"`
+	AccountID          string                  `json:"account_id"`
+	ParentID           string                  `json:"parent_id"`
+	Destination        string                  `json:"destination"`
+	DefaultDestination string                  `json:"default_destination"`
+	DownloadDirectory  domain.LibraryDirectory `json:"download_directory"`
+	ChildDirectories   []Directory             `json:"child_directories"`
+	IntervalMinutes    int                     `json:"interval_minutes"`
+	LastRunAt          *time.Time              `json:"last_run_at,omitempty"`
+	LastResult         string                  `json:"last_result,omitempty"`
+	FilesDownloaded    int                     `json:"files_downloaded"`
+	FilesGenerated     int                     `json:"files_generated"`
+	FilesSkipped       int                     `json:"files_skipped"`
+	Errors             []string                `json:"errors,omitempty"`
 }
 
 type Update struct {
@@ -62,12 +63,13 @@ type Service struct {
 	db        *ent.Client
 	drive     *drive.Drive
 	exportMgr *export.Manager
+	notifier  export.MediaNotifier
 	log       *slog.Logger
 	mu        sync.Mutex
 }
 
-func New(db *ent.Client, d *drive.Drive, exportMgr *export.Manager, logger *slog.Logger) *Service {
-	return &Service{db: db, drive: d, exportMgr: exportMgr, log: logger}
+func New(db *ent.Client, d *drive.Drive, exportMgr *export.Manager, notifier export.MediaNotifier, logger *slog.Logger) *Service {
+	return &Service{db: db, drive: d, exportMgr: exportMgr, notifier: notifier, log: logger}
 }
 
 type syncResult struct {
@@ -88,7 +90,29 @@ func (s *Service) Config(ctx context.Context) (Config, error) {
 	if config.ChildDirectories == nil {
 		config.ChildDirectories = []Directory{}
 	}
+	config.DefaultDestination, err = s.exportMgr.Config().RootDir()
+	if err != nil {
+		return Config{}, err
+	}
 	return config, nil
+}
+
+func (s *Service) destination(override string) (string, error) {
+	embyRoot, err := s.exportMgr.Config().RootDir()
+	if err != nil {
+		return "", err
+	}
+	if override == "" {
+		return embyRoot, nil
+	}
+	if !filepath.IsAbs(override) {
+		return "", domain.E(domain.KindInvalid, "本地同步目录须为服务器上的绝对路径；留空自动使用 Emby 本地输出目录", nil)
+	}
+	root := filepath.Clean(override)
+	if relative, err := filepath.Rel(filepath.Join(embyRoot, export.ManagedDirectory), root); err == nil && (relative == "." || filepath.IsLocal(relative)) {
+		return "", domain.E(domain.KindInvalid, "miyabi 子目录专用于项目刮削，不能作为本地同步目录", nil)
+	}
+	return root, nil
 }
 
 func (s *Service) Update(ctx context.Context, input Update) (Config, error) {
@@ -98,8 +122,10 @@ func (s *Service) Update(ctx context.Context, input Update) (Config, error) {
 		return Config{}, domain.E(domain.KindInvalid, "同步间隔须在 1 到 1440 分钟之间", nil)
 	}
 	destination := strings.TrimSpace(input.Destination)
-	if input.Enabled && !filepath.IsAbs(destination) {
-		return Config{}, domain.E(domain.KindInvalid, "启用同步时必须填写绝对本地目录", nil)
+	if input.Enabled {
+		if _, err := s.destination(destination); err != nil {
+			return Config{}, err
+		}
 	}
 
 	sess, err := s.drive.Open(ctx)
@@ -206,8 +232,11 @@ func (s *Service) syncLocked(ctx context.Context, config Config) error {
 	if err != nil {
 		return s.finish(ctx, config, syncResult{failures: []string{err.Error()}}, err)
 	}
-	if !filepath.IsAbs(config.Destination) {
-		err := errors.New("sidecar sync destination must be absolute")
+	root, err := s.destination(config.Destination)
+	if err != nil {
+		return s.finish(ctx, config, syncResult{failures: []string{err.Error()}}, err)
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		return s.finish(ctx, config, syncResult{failures: []string{err.Error()}}, err)
 	}
 	policy, err := database.LoadDirectoryPolicy(ctx, s.db, sess.Source())
@@ -215,8 +244,13 @@ func (s *Service) syncLocked(ctx context.Context, config Config) error {
 		return s.finish(ctx, config, syncResult{failures: []string{err.Error()}}, err)
 	}
 	var result syncResult
-	if err := s.walk(ctx, sess, config.Destination, config.ParentID, "", policy, &result); err != nil {
+	if err := s.walk(ctx, sess, root, config.ParentID, "", policy, &result); err != nil {
 		result.failures = append(result.failures, err.Error())
+	}
+	if s.notifier != nil && (result.downloaded+result.generated > 0 || (config.LastResult != "" && config.LastResult != "success")) {
+		if err := s.notifier.NotifyUpdated(ctx, root); err != nil {
+			result.failures = append(result.failures, fmt.Sprintf("Emby 媒体库更新通知失败: %v", err))
+		}
 	}
 	var runErr error
 	if len(result.failures) > 0 {
@@ -252,6 +286,16 @@ func (s *Service) walk(ctx context.Context, sess drive.Session, root, dirID, rel
 			cloudPath := path.Join(source.Directory.Path, filepath.ToSlash(childRelative))
 			if policy.ShouldScrape(source, entry.ID, cloudPath) {
 				continue
+			}
+			if relative == "" && strings.EqualFold(entry.Name, export.ManagedDirectory) {
+				embyRoot, err := s.exportMgr.Config().RootDir()
+				if err != nil {
+					return err
+				}
+				if root == embyRoot {
+					result.failures = append(result.failures, "miyabi: 此目录保留用于项目刮削，请重命名 115 中的同名同步目录或设置独立的本地同步目录")
+					continue
+				}
 			}
 			info, err := drive.SourceInfo(ctx, sess, entry.ID)
 			if err != nil || !info.IsDirectory || info.ParentID != dirID {

@@ -2,6 +2,8 @@ package export
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -11,6 +13,15 @@ type Config struct {
 	EmbyDir   string
 	PublicURL string
 	STRMToken string
+}
+
+// RootDir resolves the shared local media directory, including the default.
+func (c Config) RootDir() (string, error) {
+	dir := strings.TrimSpace(c.EmbyDir)
+	if dir == "" {
+		dir = defaultEmbyDir
+	}
+	return filepath.Abs(dir)
 }
 
 // Manager coordinates atomic access to the export configuration and serializes STRM rewrites.

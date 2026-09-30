@@ -462,7 +462,7 @@ func TestScanReconcile_CleansUpEmbyDirectoryAndNotifiesEmbyOnMovieDeletion(t *te
 	}
 
 	// 2. Simulate exported Emby files on local disk
-	movieDir := filepath.Join(embyDir, "ABP", "ABP-001")
+	movieDir := filepath.Join(embyDir, "miyabi", "ABP", "ABP-001")
 	if err := os.MkdirAll(movieDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -473,6 +473,14 @@ func TestScanReconcile_CleansUpEmbyDirectoryAndNotifiesEmbyOnMovieDeletion(t *te
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(movieDir, "poster.jpg"), []byte("poster data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	syncedDir := filepath.Join(embyDir, "ABP", "ABP-001")
+	if err := os.MkdirAll(syncedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	syncedSTRM := filepath.Join(syncedDir, "ABP-001.strm")
+	if err := os.WriteFile(syncedSTRM, []byte("original synced STRM"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -504,9 +512,12 @@ func TestScanReconcile_CleansUpEmbyDirectoryAndNotifiesEmbyOnMovieDeletion(t *te
 	}
 
 	// 6. Verify empty prefix folder was also deleted
-	prefixDir := filepath.Join(embyDir, "ABP")
+	prefixDir := filepath.Join(embyDir, "miyabi", "ABP")
 	if _, err := os.Stat(prefixDir); !os.IsNotExist(err) {
 		t.Fatalf("expected empty prefixDir %s to be deleted, got err: %v", prefixDir, err)
+	}
+	if body, err := os.ReadFile(syncedSTRM); err != nil || string(body) != "original synced STRM" {
+		t.Fatalf("cleanup modified original synced media: %q, %v", body, err)
 	}
 
 	// 7. Verify notifier was notified of the deletion
