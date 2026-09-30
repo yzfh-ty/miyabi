@@ -189,9 +189,14 @@ func stubOf(t testing.TB, d *drive.Drive) *panStub {
 	return client.(*panStub)
 }
 
-func newMountedDrive(t testing.TB, database *ent.Client, client *panStub, source domain.LibrarySource) *drive.Drive {
+func newMountedDrive(t testing.TB, db *ent.Client, client *panStub, source domain.LibrarySource) *drive.Drive {
 	t.Helper()
-	d, err := drive.NewWithClient(t.Context(), database, client)
+	if err := database.SaveSetting(t.Context(), db, database.PanDirectorySettingsKey, domain.DirectoryPolicy{
+		AccountID: source.AccountID, ParentID: source.Directory.ID, DownloadDirectory: source.Directory,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := drive.NewWithClient(t.Context(), db, client)
 	if err != nil {
 		t.Fatal(err)
 	}

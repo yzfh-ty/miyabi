@@ -142,6 +142,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		return nil, fmt.Errorf("initialize maintenance service: %w", err)
 	}
 	sidecarSyncSvc := sidecarsync.New(store.Client, driveSvc, exportMgr, logger)
+	libSvc.SetMetadataSyncer(sidecarSyncSvc)
 
 	if err := libSvc.ScheduleLocalScan(ctx); err != nil {
 		logger.ErrorContext(ctx, "failed to queue startup Emby directory scan", "error", err)

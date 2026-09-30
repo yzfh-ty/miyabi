@@ -23,8 +23,8 @@ export function PanDirectoryRow({
   return (
     <>
       <SettingRow
-        title="媒体目录"
-        description="选择 115 中的目录作为媒体库来源"
+        title="媒体根目录"
+        description="选择包含下载目录及其他媒体子目录的 115 根目录"
         inline={!directory}
       >
         <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">

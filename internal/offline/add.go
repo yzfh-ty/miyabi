@@ -33,12 +33,11 @@ func (service *Service) Add(ctx context.Context, movieID, hash string) (domain.O
 	}
 	code := codeid.Normalize(rawCode)
 
-	sess, err := service.drive.Open(ctx)
+	sess, directory, err := service.drive.OpenDownload(ctx)
 	if err != nil {
 		return domain.OfflineSubmission{}, fmt.Errorf("get 115 account for offline download: %w", err)
 	}
 	source := sess.Source()
-	directory := source.Directory
 
 	unlock, err := service.operations.Lock(ctx, source.AccountID, hash)
 	if err != nil {
@@ -50,7 +49,7 @@ func (service *Service) Add(ctx context.Context, movieID, hash string) (domain.O
 		offlinedownload.AccountIDEQ(source.AccountID), offlinedownload.HashEQ(hash),
 		offlinedownload.StatusEQ(offlinedownload.StatusRunning)).First(ctx)
 	if err == nil {
-		if existing.DirectoryID != directory.ID {
+		if existing.DirectoryID != source.Directory.ID {
 			return domain.OfflineSubmission{}, domain.E(domain.KindConflict, "该磁力正在下载到另一个目录，请先在 115 中处理该任务", nil)
 		}
 		return service.submission(ctx, existing, &source)
@@ -60,7 +59,7 @@ func (service *Service) Add(ctx context.Context, movieID, hash string) (domain.O
 	}
 
 	previous, err := service.database.OfflineDownload.Query().Where(
-		offlinedownload.AccountIDEQ(source.AccountID), offlinedownload.DirectoryIDEQ(directory.ID),
+		offlinedownload.AccountIDEQ(source.AccountID), offlinedownload.DirectoryIDEQ(source.Directory.ID),
 		offlinedownload.HashEQ(hash), offlinedownload.StatusEQ(offlinedownload.StatusDone)).
 		Order(ent.Desc(offlinedownload.FieldID)).First(ctx)
 	if err == nil {
@@ -87,7 +86,7 @@ func (service *Service) Add(ctx context.Context, movieID, hash string) (domain.O
 	// Once a remote mutation starts, finish recording it even if the tab closes.
 	submitContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), service.submitTimeout)
 	defer cancel()
-	remote, err := service.submit(submitContext, sess, hash)
+	remote, err := service.submit(submitContext, sess, hash, directory.ID)
 	if err != nil {
 		return domain.OfflineSubmission{}, fmt.Errorf("submit 115 offline download: %w", err)
 	}
@@ -96,7 +95,8 @@ func (service *Service) Add(ctx context.Context, movieID, hash string) (domain.O
 		var err error
 		created, err = tx.OfflineDownload.Create().
 			SetCode(code).SetJavdbID(movieID).SetHash(hash).SetInfoHash(remote.Hash).
-			SetAccountID(source.AccountID).SetDirectoryID(directory.ID).
+			// Retain the library scope; 115 tracks the actual download destination.
+			SetAccountID(source.AccountID).SetDirectoryID(source.Directory.ID).
 			Save(submitContext)
 		if err != nil {
 			return err

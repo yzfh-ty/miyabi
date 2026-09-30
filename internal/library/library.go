@@ -60,12 +60,17 @@ type Page struct {
 	HasMore bool                  `json:"has_more"`
 }
 
+type MetadataSyncer interface {
+	Sync(context.Context) error
+}
+
 type Service struct {
 	database     *ent.Client
 	drive        *drive.Drive
 	tasks        *tasks.Service
 	scanner      *scan.Scanner
 	localScanner *scan.LocalScanner
+	metadataSync MetadataSyncer
 	exportMgr    *export.Manager
 	scanLock     syncx.ContextLock
 }
@@ -97,6 +102,10 @@ func New(database *ent.Client, d *drive.Drive, tasks *tasks.Service, images *med
 		})
 	}
 	return svc
+}
+
+func (s *Service) SetMetadataSyncer(syncer MetadataSyncer) {
+	s.metadataSync = syncer
 }
 
 func (s *Service) StartScan(ctx context.Context) (domain.TaskInfo, error) {
@@ -160,7 +169,23 @@ func (s *Service) Scan(ctx context.Context, job tasks.Job) error {
 			return s.scanLocal(ctx, job.ID, payload)
 		})
 	}
-	return s.scanner.Run(ctx, job)
+	if err := s.scanner.Run(ctx, job); err != nil {
+		return err
+	}
+	if s.metadataSync != nil {
+		current, err := s.database.Task.Get(ctx, job.ID)
+		if err != nil {
+			return err
+		}
+		completed, err := tasks.DecodePayload[domain.ScanPayload](current.Payload)
+		if err != nil {
+			return err
+		}
+		if completed.TargetID == "" || completed.Scan.MetadataOnly {
+			return s.metadataSync.Sync(ctx)
+		}
+	}
+	return nil
 }
 
 func (s *Service) Finished(_ context.Context, _ *ent.Tx, job tasks.Job, _ error) (tasks.Change, error) {

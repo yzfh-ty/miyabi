@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ppxb/miyabi/internal/codeid"
+	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
 	subtitlemeta "github.com/ppxb/miyabi/internal/domain/subtitle"
 	"github.com/ppxb/miyabi/internal/drive"
@@ -68,6 +69,13 @@ func (service *Service) processCover(ctx context.Context, job tasks.Job, input C
 	if err != nil {
 		return nil, err
 	}
+	files, err := service.scrapeFiles(ctx, input.MetadataPayload)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, nil
+	}
 	var artwork mediaimage.Artwork
 	switch {
 	case input.Artwork != nil:
@@ -113,6 +121,9 @@ func (service *Service) processCover(ctx context.Context, job tasks.Job, input C
 	directories, err := service.Directories(ctx, sess, input.MetadataPayload)
 	if err != nil {
 		return nil, err
+	}
+	if len(directories) == 0 {
+		return nil, nil
 	}
 	snapshot := &domain.MetadataSnapshot{
 		AccountID:   input.Source.AccountID,
@@ -193,6 +204,10 @@ func (service *Service) subtitleTask(input MetadataPayload, videos []pan.File) *
 }
 
 func (service *Service) verifyVideoPositions(ctx context.Context, sess drive.Session, directory MovieDirectory) error {
+	policy, err := database.LoadDirectoryPolicy(ctx, service.db, sess.Source())
+	if err != nil {
+		return err
+	}
 	for videoID := range directory.VideoIDs {
 		info, err := sess.Info(ctx, videoID)
 		if err != nil {
@@ -200,6 +215,9 @@ func (service *Service) verifyVideoPositions(ctx context.Context, sess drive.Ses
 		}
 		if info.ParentID != directory.ID || !drive.WithinSource(info, sess.Source()) {
 			return domain.E(domain.KindConflict, "视频已移动，请重新扫描", nil)
+		}
+		if !policy.ShouldScrape(sess.Source(), info.ParentID, drive.FilePath(info.Path, info.Name)) {
+			return domain.E(domain.KindConflict, "视频所在目录已改为仅同步元数据，请重新扫描", nil)
 		}
 	}
 	return nil

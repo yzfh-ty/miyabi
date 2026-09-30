@@ -171,6 +171,13 @@ func (service *Service) Scrape(ctx context.Context, job tasks.Job) error {
 	if err != nil {
 		return err
 	}
+	files, err := service.scrapeFiles(ctx, input)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return nil
+	}
 	record, err := service.db.Movie.Query().Where(movie.IDEQ(input.MovieID),
 		movie.HasFilesWith(database.LibraryFiles(input.Source))).WithActors().WithTags().Only(ctx)
 	if err != nil {
@@ -237,8 +244,7 @@ type MovieDirectory struct {
 	Files    []pan.File
 }
 
-// Directories returns all directories containing media files for the movie.
-func (service *Service) Directories(ctx context.Context, sess drive.Session, input MetadataPayload) ([]MovieDirectory, error) {
+func (service *Service) scrapeFiles(ctx context.Context, input MetadataPayload) ([]*ent.File, error) {
 	files, err := service.db.File.Query().Where(database.LibraryFiles(input.Source), file.MovieIDEQ(input.MovieID)).
 		Order(ent.Asc(file.FieldParentID), ent.Asc(file.FieldFileID)).All(ctx)
 	if err != nil {
@@ -246,6 +252,21 @@ func (service *Service) Directories(ctx context.Context, sess drive.Session, inp
 	}
 	if len(files) == 0 {
 		return nil, domain.E(domain.KindNotFound, "影片已没有媒体文件，请重新扫描", nil)
+	}
+	policy, err := database.LoadDirectoryPolicy(ctx, service.db, input.Source)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(files, func(entry *ent.File) bool {
+		return !policy.ShouldScrape(input.Source, entry.ParentID, entry.Path)
+	}), nil
+}
+
+// Directories returns only the movie's files in directories allowed to scrape.
+func (service *Service) Directories(ctx context.Context, sess drive.Session, input MetadataPayload) ([]MovieDirectory, error) {
+	files, err := service.scrapeFiles(ctx, input)
+	if err != nil {
+		return nil, err
 	}
 	var result []MovieDirectory
 	byID := make(map[string]int)

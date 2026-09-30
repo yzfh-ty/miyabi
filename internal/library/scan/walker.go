@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/drive"
 	"github.com/ppxb/miyabi/internal/ent"
@@ -88,7 +89,11 @@ func (s *Scanner) Run(ctx context.Context, job tasks.Job) error {
 	}
 	source := sess.Source()
 	payload.Source = source
-	run := scanRun{scanner: s, session: sess, taskID: job.ID, payload: &payload}
+	policy, err := database.LoadDirectoryPolicy(ctx, s.db, source)
+	if err != nil {
+		return err
+	}
+	run := scanRun{scanner: s, session: sess, taskID: job.ID, payload: &payload, policy: &policy}
 	if payload.Scan.Stage == "reconciling" {
 		return run.reconcile(ctx)
 	}
@@ -124,6 +129,7 @@ type scanRun struct {
 	directories []Directory
 	seen        map[string]bool
 	codes       map[string]bool
+	policy      *domain.DirectoryPolicy
 	// Persist directory-start counters while its chunks commit independently.
 	checkpointProgress *domain.ScanProgress
 }
@@ -152,6 +158,12 @@ func (r *scanRun) runTarget(ctx context.Context, isResume bool) error {
 	}
 	r.payload.TargetPath = drive.FilePath(info.Path, info.Name)
 	r.payload.TargetFile = !info.IsDirectory
+	if !r.policy.ShouldScrape(r.payload.Source, info.ID, r.payload.TargetPath) {
+		r.payload.Scan.MetadataOnly = true
+		r.payload.Scan.Stage = "done"
+		r.payload.Scan.CurrentPath = r.payload.TargetPath
+		return r.savePage(ctx, r.payload.TargetPath, nil, nil)
+	}
 	if r.payload.TargetFile {
 		if !domain.IsVideo(info.Name) {
 			return domain.E(domain.KindInvalid, "115 下载结果不是视频文件", nil)
@@ -201,6 +213,10 @@ func (r *scanRun) walk(ctx context.Context, start Directory, isResume bool) erro
 	}
 	for next := 0; next < len(r.directories); next++ {
 		directory := r.directories[next]
+		if directory.ID != r.payload.Source.Directory.ID &&
+			!r.policy.ShouldScrape(r.payload.Source, directory.ID, directory.Path) {
+			continue
+		}
 		r.payload.Scan.CurrentPath = directory.Path
 		data, _ := json.Marshal(r.directories[next:])
 		r.payload.Checkpoint = string(data)
@@ -249,8 +265,15 @@ func (r *scanRun) indexDirectory(ctx context.Context, directory Directory) error
 			}
 			r.seen[entry.ID] = true
 			if entry.IsDirectory {
-				r.directories = append(r.directories, Directory{ID: entry.ID, Path: path.Join(directory.Path, entry.Name)})
+				childPath := path.Join(directory.Path, entry.Name)
+				if !r.policy.ShouldScrape(r.payload.Source, entry.ID, childPath) {
+					continue
+				}
+				r.directories = append(r.directories, Directory{ID: entry.ID, Path: childPath})
 				r.payload.Scan.DirectoriesDiscovered++
+				continue
+			}
+			if !r.policy.ShouldScrape(r.payload.Source, directory.ID, directory.Path) {
 				continue
 			}
 			r.payload.Scan.FilesScanned++

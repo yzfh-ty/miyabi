@@ -51,7 +51,8 @@ export type PanSidecarSyncConfig = {
   account_id: string
   parent_id: string
   destination: string
-  child_directories: PanDirectory[]
+  download_directory: PanDirectory
+  child_directories: (PanDirectory & { mode?: 'scrape' | 'sync' })[]
   interval_minutes: number
   last_run_at?: string
   last_result?: string
@@ -63,7 +64,7 @@ export type PanSidecarSyncConfig = {
 
 export type PanSidecarSyncUpdate = Pick<
   PanSidecarSyncConfig,
-  'enabled' | 'destination' | 'child_directories' | 'interval_minutes'
+  'enabled' | 'destination' | 'download_directory' | 'child_directories' | 'interval_minutes'
 >
 
 export type PanLoginSession = {

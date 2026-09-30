@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -22,7 +23,7 @@ import (
 )
 
 const (
-	configKey   = "pan.sidecar_sync"
+	configKey   = database.PanDirectorySettingsKey
 	maxFileSize = 32 << 20
 )
 
@@ -30,28 +31,31 @@ type Directory struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Path string `json:"path"`
+	Mode string `json:"mode,omitempty"`
 }
 
 type Config struct {
-	Enabled          bool        `json:"enabled"`
-	AccountID        string      `json:"account_id"`
-	ParentID         string      `json:"parent_id"`
-	Destination      string      `json:"destination"`
-	ChildDirectories []Directory `json:"child_directories"`
-	IntervalMinutes  int         `json:"interval_minutes"`
-	LastRunAt        *time.Time  `json:"last_run_at,omitempty"`
-	LastResult       string      `json:"last_result,omitempty"`
-	FilesDownloaded  int         `json:"files_downloaded"`
-	FilesGenerated   int         `json:"files_generated"`
-	FilesSkipped     int         `json:"files_skipped"`
-	Errors           []string    `json:"errors,omitempty"`
+	Enabled           bool                    `json:"enabled"`
+	AccountID         string                  `json:"account_id"`
+	ParentID          string                  `json:"parent_id"`
+	Destination       string                  `json:"destination"`
+	DownloadDirectory domain.LibraryDirectory `json:"download_directory"`
+	ChildDirectories  []Directory             `json:"child_directories"`
+	IntervalMinutes   int                     `json:"interval_minutes"`
+	LastRunAt         *time.Time              `json:"last_run_at,omitempty"`
+	LastResult        string                  `json:"last_result,omitempty"`
+	FilesDownloaded   int                     `json:"files_downloaded"`
+	FilesGenerated    int                     `json:"files_generated"`
+	FilesSkipped      int                     `json:"files_skipped"`
+	Errors            []string                `json:"errors,omitempty"`
 }
 
 type Update struct {
-	Enabled          bool        `json:"enabled"`
-	Destination      string      `json:"destination"`
-	ChildDirectories []Directory `json:"child_directories"`
-	IntervalMinutes  int         `json:"interval_minutes"`
+	Enabled           bool                    `json:"enabled"`
+	Destination       string                  `json:"destination"`
+	DownloadDirectory domain.LibraryDirectory `json:"download_directory"`
+	ChildDirectories  []Directory             `json:"child_directories"`
+	IntervalMinutes   int                     `json:"interval_minutes"`
 }
 
 type Service struct {
@@ -114,8 +118,21 @@ func (s *Service) Update(ctx context.Context, input Update) (Config, error) {
 		}
 	}
 	selected := make([]Directory, 0, len(input.ChildDirectories))
+	var downloadDirectory domain.LibraryDirectory
+	if id := input.DownloadDirectory.ID; id != "" {
+		if id == source.Directory.ID {
+			downloadDirectory = source.Directory
+		} else if entry, ok := available[id]; ok {
+			downloadDirectory = domain.LibraryDirectory{ID: entry.ID, Name: entry.Name, Path: entry.Name}
+		} else {
+			return Config{}, domain.E(domain.KindInvalid, "磁链下载目录必须是媒体根目录或其直接子目录", nil)
+		}
+	}
 	seen := make(map[string]bool)
 	for _, requested := range input.ChildDirectories {
+		if requested.Mode != "" && requested.Mode != "scrape" && requested.Mode != "sync" {
+			return Config{}, domain.E(domain.KindInvalid, "目录处理方式必须是刮削或同步元数据", nil)
+		}
 		entry, ok := available[requested.ID]
 		if !ok || seen[requested.ID] {
 			return Config{}, domain.E(domain.KindInvalid, "同步目录必须是当前挂载目录的直接子目录", nil)
@@ -124,7 +141,11 @@ func (s *Service) Update(ctx context.Context, input Update) (Config, error) {
 		if !safeRelative(entry.Name) {
 			return Config{}, domain.E(domain.KindInvalid, "115 子目录名称不能安全映射到本地路径", nil)
 		}
-		selected = append(selected, Directory{ID: entry.ID, Name: entry.Name, Path: entry.Name})
+		mode := requested.Mode
+		if mode == "" {
+			mode = "sync"
+		}
+		selected = append(selected, Directory{ID: entry.ID, Name: entry.Name, Path: entry.Name, Mode: mode})
 	}
 	slices.SortFunc(selected, func(a, b Directory) int { return strings.Compare(a.Name, b.Name) })
 
@@ -140,8 +161,12 @@ func (s *Service) Update(ctx context.Context, input Update) (Config, error) {
 		config.Destination = filepath.Clean(destination)
 	}
 	config.ChildDirectories = selected
+	config.DownloadDirectory = downloadDirectory
 	config.IntervalMinutes = input.IntervalMinutes
-	if err := database.SaveSetting(ctx, s.db, configKey, config); err != nil {
+	config.LastRunAt = nil
+	if err := sess.Commit(ctx, func(tx *ent.Tx) error {
+		return database.SaveSetting(ctx, tx.Client(), configKey, config)
+	}); err != nil {
 		return Config{}, err
 	}
 	return config, nil
@@ -151,7 +176,7 @@ func (s *Service) Tick(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	config, err := s.Config(ctx)
-	if err != nil || !config.Enabled || len(config.ChildDirectories) == 0 {
+	if err != nil || !config.Enabled {
 		return err
 	}
 	if config.LastRunAt != nil && time.Since(*config.LastRunAt) < time.Duration(config.IntervalMinutes)*time.Minute {
@@ -171,7 +196,7 @@ func (s *Service) Sync(ctx context.Context) error {
 }
 
 func (s *Service) syncLocked(ctx context.Context, config Config) error {
-	if !config.Enabled || len(config.ChildDirectories) == 0 {
+	if !config.Enabled {
 		return nil
 	}
 	sess, err := s.drive.OpenSource(ctx, domain.LibrarySource{
@@ -185,40 +210,13 @@ func (s *Service) syncLocked(ctx context.Context, config Config) error {
 		err := errors.New("sidecar sync destination must be absolute")
 		return s.finish(ctx, config, syncResult{failures: []string{err.Error()}}, err)
 	}
-	rootEntries, err := drive.DirectoryEntries(ctx, sess, config.ParentID)
+	policy, err := database.LoadDirectoryPolicy(ctx, s.db, sess.Source())
 	if err != nil {
 		return s.finish(ctx, config, syncResult{failures: []string{err.Error()}}, err)
 	}
-	selected := make(map[string]Directory, len(config.ChildDirectories))
-	for _, child := range config.ChildDirectories {
-		selected[child.ID] = child
-	}
 	var result syncResult
-	for _, entry := range rootEntries {
-		child, ok := selected[entry.ID]
-		if !ok {
-			continue
-		}
-		if !entry.IsDirectory {
-			result.failures = append(result.failures, fmt.Sprintf("选中的目录 %s 已不再是文件夹", child.Name))
-			continue
-		}
-		info, err := drive.SourceInfo(ctx, sess, entry.ID)
-		if err != nil || !info.IsDirectory || info.ParentID != config.ParentID {
-			if err == nil {
-				err = errors.New("directory is no longer a direct child of the mounted directory")
-			}
-			result.failures = append(result.failures, fmt.Sprintf("%s: %v", child.Name, err))
-			continue
-		}
-		if err := s.walk(ctx, sess, config.Destination, child.ID, child.Path, &result); err != nil {
-			result.failures = append(result.failures, fmt.Sprintf("%s: %v", child.Name, err))
-		}
-	}
-	for id, child := range selected {
-		if !slices.ContainsFunc(rootEntries, func(entry pan.File) bool { return entry.ID == id && entry.IsDirectory }) {
-			result.failures = append(result.failures, fmt.Sprintf("同步目录 %s 已从挂载目录移除", child.Name))
-		}
+	if err := s.walk(ctx, sess, config.Destination, config.ParentID, "", policy, &result); err != nil {
+		result.failures = append(result.failures, err.Error())
 	}
 	var runErr error
 	if len(result.failures) > 0 {
@@ -230,8 +228,8 @@ func (s *Service) syncLocked(ctx context.Context, config Config) error {
 	return s.finish(ctx, config, result, runErr)
 }
 
-func (s *Service) walk(ctx context.Context, sess drive.Session, root, dirID, relative string, result *syncResult) error {
-	if !safeRelative(relative) {
+func (s *Service) walk(ctx context.Context, sess drive.Session, root, dirID, relative string, policy domain.DirectoryPolicy, result *syncResult) error {
+	if relative != "" && !safeRelative(relative) {
 		return fmt.Errorf("invalid relative path %q", relative)
 	}
 	entries, err := drive.DirectoryEntries(ctx, sess, dirID)
@@ -239,6 +237,8 @@ func (s *Service) walk(ctx context.Context, sess drive.Session, root, dirID, rel
 		return err
 	}
 	var videos []pan.File
+	source := sess.Source()
+	syncFiles := !policy.ShouldScrape(source, dirID, path.Join(source.Directory.Path, filepath.ToSlash(relative)))
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -249,9 +249,24 @@ func (s *Service) walk(ctx context.Context, sess drive.Session, root, dirID, rel
 			continue
 		}
 		if entry.IsDirectory {
-			if err := s.walk(ctx, sess, root, entry.ID, childRelative, result); err != nil {
+			cloudPath := path.Join(source.Directory.Path, filepath.ToSlash(childRelative))
+			if policy.ShouldScrape(source, entry.ID, cloudPath) {
+				continue
+			}
+			info, err := drive.SourceInfo(ctx, sess, entry.ID)
+			if err != nil || !info.IsDirectory || info.ParentID != dirID {
+				if err == nil {
+					err = errors.New("directory moved while syncing")
+				}
+				result.failures = append(result.failures, fmt.Sprintf("%s: %v", childRelative, err))
+				continue
+			}
+			if err := s.walk(ctx, sess, root, entry.ID, childRelative, policy, result); err != nil {
 				result.failures = append(result.failures, fmt.Sprintf("%s: %v", childRelative, err))
 			}
+			continue
+		}
+		if !syncFiles {
 			continue
 		}
 		if domain.IsVideo(entry.Name) {

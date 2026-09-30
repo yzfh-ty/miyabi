@@ -18,6 +18,7 @@ type LibrarySource struct {
 
 // ScanProgress records the state and statistics of a library scan.
 type ScanProgress struct {
+	MetadataOnly          bool   `json:"metadata_only,omitempty"`
 	Stage                 string `json:"stage"`
 	CurrentPath           string `json:"current_path"`
 	DirectoriesDiscovered int    `json:"directories_discovered"`

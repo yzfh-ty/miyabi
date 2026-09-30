@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"entgo.io/ent/dialect/sql"
@@ -28,6 +29,10 @@ func ReconcileScan(ctx context.Context, db *ent.Client, taskID int, payload *dom
 
 // reconcileTx cleans up missing files, updates offline workflows, and schedules metadata scrape tasks.
 func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config) error {
+	policy, err := database.LoadDirectoryPolicy(ctx, tx.Client(), r.payload.Source)
+	if err != nil {
+		return err
+	}
 	stale := file.And(database.LibraryFiles(r.payload.Source), file.ScanIDNEQ(r.payload.ScanID))
 	if r.payload.TargetID != "" {
 		if r.payload.TargetFile {
@@ -39,10 +44,22 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 			})
 		}
 	}
-	var err error
-	movies, err := tx.File.Query().Where(stale).QueryMovie().IDs(ctx)
+	staleMovies, err := tx.File.Query().Where(stale).QueryMovie().Select(movie.FieldID, movie.FieldCode).
+		WithFiles(func(q *ent.FileQuery) {
+			q.Where(stale).Select(file.FieldID, file.FieldMovieID, file.FieldParentID, file.FieldPath)
+		}).All(ctx)
 	if err != nil {
 		return fmt.Errorf("find removed movie files: %w", err)
+	}
+	movies := make([]int, 0, len(staleMovies))
+	preserveExports := make(map[string]bool)
+	for _, record := range staleMovies {
+		movies = append(movies, record.ID)
+		for _, entry := range record.Edges.Files {
+			if !policy.ShouldScrape(r.payload.Source, entry.ParentID, entry.Path) {
+				preserveExports[record.Code] = true
+			}
+		}
 	}
 	r.payload.Scan.RemovedFiles, err = tx.File.Delete().Where(stale).Exec(ctx)
 	if err != nil {
@@ -61,6 +78,10 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 				}
 				var cleanupErrors []error
 				for _, code := range removed {
+					// Switching to metadata sync must not delete existing local files.
+					if preserveExports[code] {
+						continue
+					}
 					movieDir := scrape.EmbyMovieDir(cfg.EmbyDir, code)
 					if err := os.RemoveAll(movieDir); err != nil {
 						cleanupErrors = append(cleanupErrors, fmt.Errorf("remove exported movie %s after commit: %w", code, err))
@@ -96,6 +117,12 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 		return fmt.Errorf("find scanned metadata jobs: %w", err)
 	}
 	for _, record := range moviesToScrape {
+		record.Edges.Files = slices.DeleteFunc(record.Edges.Files, func(entry *ent.File) bool {
+			return !policy.ShouldScrape(r.payload.Source, entry.ParentID, entry.Path)
+		})
+		if len(record.Edges.Files) == 0 {
+			continue
+		}
 		if record.ScrapeStatus == movie.ScrapeStatusDone && scrape.SnapshotMatches(record, r.payload.Source) {
 			if r.scanner.images != nil {
 				cached, err := r.scanner.images.Exists(scrape.MovieArtwork(record))

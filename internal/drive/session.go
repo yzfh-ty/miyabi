@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/pan"
@@ -54,11 +55,38 @@ func (d *Drive) OpenSource(ctx context.Context, expected domain.LibrarySource) (
 	return sess, nil
 }
 
+// OpenDownload keeps the library scope while selecting a separate destination.
+func (d *Drive) OpenDownload(ctx context.Context) (Session, domain.LibraryDirectory, error) {
+	sess, err := d.Open(ctx)
+	if err != nil {
+		return nil, domain.LibraryDirectory{}, err
+	}
+	source := sess.Source()
+	policy, err := database.LoadDirectoryPolicy(ctx, d.database, source)
+	if err != nil {
+		return nil, domain.LibraryDirectory{}, err
+	}
+	directory := source.Directory
+	if id := policy.DownloadDirectory.ID; id != "" && id != source.Directory.ID {
+		info, err := SourceInfo(ctx, sess, id)
+		if err != nil {
+			return nil, domain.LibraryDirectory{}, err
+		}
+		if !info.IsDirectory || info.ParentID != source.Directory.ID {
+			return nil, domain.LibraryDirectory{}, domain.E(domain.KindConflict, "磁链下载目录已移出媒体根目录，请重新选择", nil)
+		}
+		directory = domain.LibraryDirectory{ID: info.ID, Name: info.Name, Path: FilePath(info.Path, info.Name)}
+	}
+	sess.(*sourceSession).downloadDirectoryID = directory.ID
+	return sess, directory, nil
+}
+
 type sourceSession struct {
-	drive             *Drive
-	source            domain.LibrarySource
-	version           uint64
-	credentialVersion uint64
+	drive               *Drive
+	source              domain.LibrarySource
+	version             uint64
+	credentialVersion   uint64
+	downloadDirectoryID string
 }
 
 func (s *sourceSession) Source() domain.LibrarySource {
@@ -161,7 +189,11 @@ func (s *sourceSession) AddOffline(ctx context.Context, magnet string) (string, 
 		return "", err
 	}
 	return withPanSourceToken(ctx, s.drive, state, func(token string) (string, error) {
-		return s.drive.client.AddOffline(ctx, token, magnet, s.source.Directory.ID)
+		directoryID := s.downloadDirectoryID
+		if directoryID == "" {
+			directoryID = s.source.Directory.ID
+		}
+		return s.drive.client.AddOffline(ctx, token, magnet, directoryID)
 	})
 }
 

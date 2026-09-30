@@ -15,7 +15,7 @@ import (
 // submit handles duplicate history by inspecting its real output. Only a
 // terminal task with confirmed absent video content is removed, never files.
 // The caller holds the account/hash lock, never the shared Pan state lock.
-func (service *Service) submit(ctx context.Context, sess drive.Session, hash string) (pan.OfflineTask, error) {
+func (service *Service) submit(ctx context.Context, sess drive.Session, hash, directoryID string) (pan.OfflineTask, error) {
 	infoHash, err := sess.AddOffline(ctx, "magnet:?xt=urn:btih:"+hash)
 	if err == nil {
 		return pan.OfflineTask{Hash: infoHash}, nil
@@ -27,10 +27,9 @@ func (service *Service) submit(ctx context.Context, sess drive.Session, hash str
 	if err != nil {
 		return pan.OfflineTask{}, err
 	}
-	source := sess.Source()
 	if remote.Status == 0 || remote.Status == 1 {
-		if remote.DirectoryID != source.Directory.ID {
-			return pan.OfflineTask{}, domain.E(domain.KindConflict, "115 已有该磁力的下载任务，目标目录与当前媒体目录不一致", nil)
+		if remote.DirectoryID != directoryID {
+			return pan.OfflineTask{}, domain.E(domain.KindConflict, "115 已有该磁力的下载任务，目标目录与所选下载目录不一致", nil)
 		}
 		return remote, nil
 	}

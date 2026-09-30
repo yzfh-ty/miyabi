@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ppxb/miyabi/internal/database"
+	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/drive"
 	"github.com/ppxb/miyabi/internal/export"
 	"github.com/ppxb/miyabi/internal/pan"
@@ -90,7 +91,7 @@ func TestSyncGeneratesPlayableSTRMsWithOriginalMetadataAndPaths(t *testing.T) {
 			},
 			"20": {
 				{ID: "101", Name: "旅行 2026.MKV", PickCode: "video-pick", Size: 1 << 30},
-				{ID: "30", Name: "多集", IsDirectory: true},
+				{ID: "30", ParentID: "20", Name: "多集", IsDirectory: true},
 				{ID: "103", Name: "旅行 2026.nfo", PickCode: "nfo-pick"},
 				{ID: "104", Name: "poster.jpg", PickCode: "poster-pick"},
 				{ID: "105", Name: "kept.mp4"},
@@ -125,7 +126,7 @@ func TestSyncGeneratesPlayableSTRMsWithOriginalMetadataAndPaths(t *testing.T) {
 	}
 	if _, err := svc.Update(ctx, Update{
 		Enabled: true, Destination: root, IntervalMinutes: 30,
-		ChildDirectories: []Directory{{ID: "20"}},
+		DownloadDirectory: domain.LibraryDirectory{ID: "99"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -175,6 +176,12 @@ func TestSyncGeneratesPlayableSTRMsWithOriginalMetadataAndPaths(t *testing.T) {
 	}
 	if store.Client.Task.Query().CountX(ctx) != 0 || store.Client.Movie.Query().CountX(ctx) != 0 || store.Client.File.Query().CountX(ctx) != 0 {
 		t.Fatal("sidecar sync must generate STRMs without scraping or indexing movies")
+	}
+	if _, err := svc.Update(ctx, Update{
+		Enabled: true, Destination: root, IntervalMinutes: 30,
+		DownloadDirectory: domain.LibraryDirectory{ID: "101"},
+	}); err == nil {
+		t.Fatal("a video file was accepted as a download directory")
 	}
 	address, err := strm.New(store.Client, d).StreamURL(ctx, "101", "Emby")
 	if err != nil || address != "https://cdn.example/video.mkv" {
