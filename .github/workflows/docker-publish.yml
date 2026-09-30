@@ -4,12 +4,18 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to publish (defaults to manual-<run number>)"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 env:
-  IMAGE_NAME: ghcr.io/ppxb/miyabi
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/miyabi
 
 jobs:
   version:
@@ -20,18 +26,28 @@ jobs:
       - name: Resolve and validate version
         id: version
         shell: bash
+        env:
+          REQUESTED_IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Invalid version format: '$version' (expected e.g. 1.2.3)" >&2
-            exit 1
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Invalid version format: '$version' (expected e.g. 1.2.3)" >&2
+              exit 1
+            fi
+          else
+            version="${REQUESTED_IMAGE_TAG:-manual-${GITHUB_RUN_NUMBER}}"
+            if [[ ! "$version" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+              echo "::error::Invalid image tag: '$version'" >&2
+              exit 1
+            fi
           fi
 
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
   changelog:
     name: Generate changelog
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: version
     outputs:
@@ -54,6 +70,7 @@ jobs:
 
   create-draft-release:
     name: Create draft release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -156,11 +173,12 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{raw}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,prefix=sha-,format=short
-            type=raw,value=latest
+            type=raw,value=${{ needs.version.outputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=semver,pattern={{raw}},enable=${{ github.event_name == 'push' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'push' }}
+            type=semver,pattern={{major}},enable=${{ github.event_name == 'push' }}
+            type=sha,prefix=sha-,format=short,enable=${{ github.event_name == 'push' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
 
       - name: Build and push (multi-arch)
         id: push
@@ -182,6 +200,7 @@ jobs:
 
   publish-release:
     name: Publish release
+    if: github.event_name == 'push'
     needs: [version, create-draft-release, publish]
     runs-on: ubuntu-latest
     permissions:
