@@ -13,7 +13,7 @@ import (
 )
 
 func TestClientUsesHeaderAuthAndPreservesRequestFormats(t *testing.T) {
-	paths := make(chan string, 5)
+	paths := make(chan string, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Emby-Token") != "secret +&" || r.URL.RawQuery != "" {
 			t.Errorf("incorrect auth: header=%q query=%q", r.Header.Get("X-Emby-Token"), r.URL.RawQuery)
@@ -42,11 +42,6 @@ func TestClientUsesHeaderAuthAndPreservesRequestFormats(t *testing.T) {
 				t.Errorf("avatar format changed")
 			}
 			w.WriteHeader(http.StatusNoContent)
-		case "/emby/Library/Refresh":
-			if r.Method != http.MethodPost {
-				t.Errorf("method=%s", r.Method)
-			}
-			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}
@@ -58,8 +53,8 @@ func TestClientUsesHeaderAuthAndPreservesRequestFormats(t *testing.T) {
 	if err != nil || info.ID != "server" || info.Version != "4.8" {
 		t.Fatalf("info=%+v err=%v", info, err)
 	}
-	people, err := client.personsWithoutAvatar(t.Context(), cfg)
-	if err != nil || len(people) != 1 || people[0].ID != "one" {
+	people, err := client.persons(t.Context(), cfg)
+	if err != nil || len(people) != 2 || people[0].ID != "one" || people[1].ID != "two" {
 		t.Fatalf("people=%+v err=%v", people, err)
 	}
 	if err := client.notify(t.Context(), cfg, []mediaUpdateItem{{Path: "/media/one", UpdateType: "Created"}}); err != nil {
@@ -68,10 +63,7 @@ func TestClientUsesHeaderAuthAndPreservesRequestFormats(t *testing.T) {
 	if err := client.uploadAvatar(t.Context(), cfg, "one", domain.Media{Body: []byte("image"), ContentType: "image/jpeg"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.refresh(t.Context(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	if len(paths) != 5 {
+	if len(paths) != 4 {
 		t.Fatalf("requests=%d", len(paths))
 	}
 }
@@ -96,5 +88,36 @@ func TestClientClassifiesFailuresAndPreservesCancellation(t *testing.T) {
 	_, err := newEmbyClient().ping(ctx, Config{ServerURL: "http://127.0.0.1:1"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation lost: %v", err)
+	}
+}
+
+func TestAvatarHealthUsesDecodedDimensionsInsteadOfImageTagsOrSize(t *testing.T) {
+	for _, scenario := range []struct {
+		name, details string
+		status        int
+		valid         bool
+	}{
+		{"valid zero-size metadata", `[{"ImageType":"Primary","Width":120,"Height":180,"Size":0}]`, 200, true},
+		{"encoded image", `[{"ImageType":"Primary","Size":0}]`, 200, false},
+		{"missing file", `[]`, 200, false},
+		{"other image type", `[{"ImageType":"Backdrop","Width":120,"Height":180}]`, 200, false},
+		{"inspection failed", `server unavailable`, 503, false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/Items/person/Images" || r.Method != http.MethodGet {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(scenario.status)
+				io.WriteString(w, scenario.details)
+			}))
+			defer server.Close()
+			for _, person := range []personItem{{ID: "person", PrimaryImageTag: "tag"}, {ID: "person", ImageTags: map[string]string{"Primary": "tag"}}} {
+				valid, err := newEmbyClient().hasValidAvatar(t.Context(), Config{ServerURL: server.URL}, person)
+				if valid != scenario.valid || (err != nil) != (scenario.status != 200) {
+					t.Fatalf("valid=%t err=%v", valid, err)
+				}
+			}
+		})
 	}
 }

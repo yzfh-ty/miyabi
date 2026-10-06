@@ -21,7 +21,7 @@ export function ScanProgressView({ task }: { task: ScanTask }) {
       : scanStatus(task)
   const count = scanCount(task)
   const summary = `${status}，${count}`
-  const value = active && !metadata && !disconnected ? null : task.progress
+  const value = active && !task.paused && !metadata && !disconnected ? null : task.progress
 
   return (
     <div className="min-w-0 flex-1 space-y-2">
@@ -29,7 +29,7 @@ export function ScanProgressView({ task }: { task: ScanTask }) {
         {disconnected ? (
           <Button variant="link" size="xs" className="h-5 px-0" onClick={connection.reconnect}>
             <RefreshCwIcon />
-            重连进度
+            重新连接
           </Button>
         ) : (
           <Tooltip>

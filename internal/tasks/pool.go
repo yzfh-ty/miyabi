@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -17,11 +18,12 @@ type PoolQueue interface {
 	Recover(context.Context, []Kind) error
 	Claim(context.Context, []Kind) (*Job, error)
 	Finish(context.Context, int, error) error
+	NextRetry(context.Context, []Kind) (time.Time, error)
 }
 
 // PoolBus defines the notification wake operations required by the worker Pool.
 type PoolBus interface {
-	Subscribe() (<-chan struct{}, func())
+	SubscribePool() (<-chan struct{}, func())
 }
 
 // Pool coordinates concurrent background workers executing registered task handlers.
@@ -49,9 +51,14 @@ func NewPool(queue PoolQueue, bus PoolBus, registry *Registry, kinds []Kind, siz
 // Run starts the worker goroutines and waits for context cancellation.
 func (pool *Pool) Run(ctx context.Context) error {
 	// Subscribe before recovery and claiming so an enqueue cannot be missed.
-	// Each pool needs its own notification; sharing a channel can wake the wrong pool.
-	pending, unsubscribe := pool.bus.Subscribe()
-	defer unsubscribe()
+	// Each worker gets a wakeup so a coalesced batch can fill the pool without
+	// claims broadcasting another event to every pool.
+	pending := make([]<-chan struct{}, pool.size)
+	for i := range pending {
+		updates, unsubscribe := pool.bus.SubscribePool()
+		pending[i] = updates
+		defer unsubscribe()
+	}
 	if err := pool.queue.Recover(ctx, pool.kinds); err != nil {
 		if ctx.Err() != nil {
 			return nil
@@ -59,8 +66,8 @@ func (pool *Pool) Run(ctx context.Context) error {
 		return err
 	}
 	group, ctx := errgroup.WithContext(ctx)
-	for range pool.size {
-		group.Go(func() error { return pool.runWorker(ctx, pending) })
+	for _, updates := range pending {
+		group.Go(func() error { return pool.runWorker(ctx, updates) })
 	}
 	return group.Wait()
 }
@@ -81,12 +88,25 @@ func (pool *Pool) runWorker(ctx context.Context, pending <-chan struct{}) error 
 			continue
 		}
 		if job == nil {
+			next, err := pool.queue.NextRetry(ctx, pool.kinds)
+			if err != nil {
+				next = time.Now().Add(poolRetryDelay)
+			}
+			var timer *time.Timer
+			var due <-chan time.Time
+			if !next.IsZero() {
+				timer = time.NewTimer(time.Until(next))
+				due = timer.C
+			}
 			select {
 			case <-ctx.Done():
-				return nil
 			case <-pending:
-				continue
+			case <-due:
 			}
+			if timer != nil {
+				timer.Stop()
+			}
+			continue
 		}
 		handler, ok := pool.registry.Get(job.Type)
 		if !ok {
@@ -117,8 +137,10 @@ func (pool *Pool) runWorker(ctx context.Context, pending <-chan struct{}) error 
 		if ctx.Err() != nil {
 			return nil
 		}
-		if runError != nil {
-			pool.logger.ErrorContext(ctx, "task failed", "task_id", job.ID, "type", string(job.Type), "error", runError)
+		if errors.Is(runError, ErrPaused) {
+			pool.logger.InfoContext(ctx, "task paused", "task_id", job.ID, "type", string(job.Type))
+		} else if runError != nil {
+			pool.logger.WarnContext(ctx, "task attempt failed", "task_id", job.ID, "type", string(job.Type), "error", runError)
 		} else {
 			pool.logger.InfoContext(ctx, "task completed", "task_id", job.ID, "type", string(job.Type))
 		}

@@ -1,17 +1,13 @@
-import { Link } from '@tanstack/react-router'
-import { CloudDownloadIcon, LoaderCircleIcon, Trash2Icon } from 'lucide-react'
+import { LoaderCircleIcon, Trash2Icon } from 'lucide-react'
 
-import { useMovieState } from '@/api/movie-states'
-import {
-  type SubscriptionItem,
-  useEnqueueSubscription,
-  useRemoveSubscription
-} from '@/api/subscriptions'
+import { type SubscriptionItem, useRemoveSubscription } from '@/api/subscriptions'
 import { MovieCard } from '@/components/movie'
 import { MovieStateBadge } from '@/components/movie/movie-badges'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { MovieDetailTrigger } from '@/features/movie-detail/detail-trigger'
 import { cn } from 'cn'
 
 const dateTimeFormat = new Intl.DateTimeFormat('zh-CN', {
@@ -33,8 +29,7 @@ export function isPendingSubscription(item: SubscriptionItem) {
   return item.status === 'waiting' || item.status === 'stale'
 }
 
-// One movie subscription in the grid. Selection mode mirrors the history page:
-// the whole card toggles the checkbox and stops navigating.
+// Keep the card mounted when switching between browsing and selection.
 export function SubscriptionCard({
   item,
   selecting,
@@ -48,12 +43,8 @@ export function SubscriptionCard({
   disabled: boolean
   onSelect: () => void
 }) {
-  const enqueue = useEnqueueSubscription()
   const remove = useRemoveSubscription()
-  const state = useMovieState({ id: item.target_id, code: item.code })
-  const busy = disabled || enqueue.isPending || remove.isPending
-  const canEnqueue =
-    isPendingSubscription(item) && !state.isPlaceholderData && state.state === 'not_in_library'
+  const busy = disabled || remove.isPending
 
   const card = (
     <MovieCard
@@ -77,73 +68,56 @@ export function SubscriptionCard({
           <Badge variant={statusVariant(item.status)}>{statusLabels[item.status]}</Badge>
         </>
       }
-    >
-      {item.auto_download ? <Badge variant="outline">自动入库</Badge> : null}
-      {item.origin_id ? <Badge variant="outline">演员新作</Badge> : null}
-      {!selecting ? (
-        <div className="flex w-full items-center justify-end gap-2">
-          {canEnqueue ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              disabled={busy}
-              onClick={event => {
-                event.preventDefault()
-                enqueue.mutate(item.id)
-              }}
-            >
-              {enqueue.isPending ? (
-                <LoaderCircleIcon className="animate-spin" />
-              ) : (
-                <CloudDownloadIcon />
-              )}
-              入库
-            </Button>
-          ) : null}
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            disabled={busy}
-            onClick={event => {
-              event.preventDefault()
-              remove.mutate(item)
-            }}
-          >
-            {remove.isPending ? <LoaderCircleIcon className="animate-spin" /> : <Trash2Icon />}
-            取消订阅
-          </Button>
-        </div>
-      ) : null}
-    </MovieCard>
+      coverOverlay={
+        !selecting ? (
+          <div className="absolute top-2 right-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="icon-sm"
+                  disabled={busy}
+                  onClick={event => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    remove.mutate(item)
+                  }}
+                >
+                  {remove.isPending ? (
+                    <LoaderCircleIcon className="animate-spin" />
+                  ) : (
+                    <Trash2Icon />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left">取消订阅</TooltipContent>
+            </Tooltip>
+          </div>
+        ) : undefined
+      }
+    />
   )
 
   return (
     <div className="relative h-full min-w-0">
-      {selecting ? (
-        <Button
-          type="button"
-          variant="ghost"
-          className={cn(
-            'block h-full w-full min-w-0 rounded-2xl p-0 text-left whitespace-normal hover:bg-transparent hover:text-current dark:hover:bg-transparent',
-            selected && 'ring-2 ring-success'
-          )}
-          disabled={disabled}
-          onClick={onSelect}
-        >
-          {card}
-        </Button>
-      ) : (
-        <Link
-          to="/discover/$movieId"
-          search={previous => ({ main: previous.main || undefined })}
-          params={{ movieId: item.target_id }}
-          className="block h-full rounded-2xl outline-ring"
-        >
-          {card}
-        </Link>
-      )}
+      <MovieDetailTrigger
+        movie={{ id: item.target_id }}
+        className={cn(
+          'block h-full rounded-2xl outline-ring',
+          selected && 'ring-2 ring-success',
+          selecting && disabled && 'cursor-not-allowed opacity-50'
+        )}
+        role={selecting ? 'checkbox' : undefined}
+        disabled={selecting && disabled}
+        onClick={event => {
+          if (!selecting) return
+          event.preventDefault()
+          onSelect()
+        }}
+      >
+        {card}
+      </MovieDetailTrigger>
       {selecting ? (
         <Checkbox
           checked={selected}

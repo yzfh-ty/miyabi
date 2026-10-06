@@ -7,8 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"entgo.io/ent/dialect/sql"
-	"entgo.io/ent/dialect/sql/sqljson"
 	"github.com/ppxb/miyabi/internal/codeid"
 	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
@@ -17,33 +15,45 @@ import (
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/ent/file"
 	"github.com/ppxb/miyabi/internal/ent/movie"
-	"github.com/ppxb/miyabi/internal/ent/task"
 	"github.com/ppxb/miyabi/internal/export"
 	mediaimage "github.com/ppxb/miyabi/internal/image"
+	"github.com/ppxb/miyabi/internal/nfo"
 	"github.com/ppxb/miyabi/internal/pan"
-	"github.com/ppxb/miyabi/internal/syncx"
 	"github.com/ppxb/miyabi/internal/tasks"
 )
 
 // MetadataPayload describes the input for a movie scrape job.
 type MetadataPayload struct {
+	Rebuild    bool                 `json:"rebuild,omitempty"`
 	Source     domain.LibrarySource `json:"source"`
 	ScanTaskID int                  `json:"scan_task_id"`
 	MovieID    int                  `json:"movie_id"`
 	Code       string               `json:"code"`
 	JavDBID    string               `json:"javdb_id,omitempty"`
+	ManualCode string               `json:"manual_code,omitempty"`
 }
 
-// Discoverer abstracts catalogue queries and media downloads.
-type Discoverer interface {
-	ResolveMovieID(ctx context.Context, code string) (string, error)
-	CatalogueDetail(ctx context.Context, id string) (domain.MovieDetail, error)
-	Media(ctx context.Context, url string) (domain.Media, error)
+// Payload holds the checkpoints of one movie scraping workflow.
+type Payload struct {
+	MetadataPayload
+	MetadataReady bool                `json:"metadata_ready,omitempty"`
+	Document      nfo.Movie           `json:"document"`
+	Artwork       *mediaimage.Artwork `json:"artwork,omitempty"`
+	PosterVersion int                 `json:"poster_version,omitempty"`
+	Completed     bool                `json:"completed,omitempty"`
 }
 
-// Notifier notifies subscribers that library contents changed.
+// MetadataSource resolves independent sources and downloads their image candidates.
+type MetadataSource interface {
+	Resolve(context.Context, domain.MovieRef) (domain.MovieMetadata, error)
+	Fallback(context.Context, domain.MovieRef) (domain.MovieMetadata, error)
+	Image(context.Context, domain.ImageCandidate) (domain.Media, error)
+}
+
+// Notifier reports committed library updates and queued follow-up work.
 type Notifier interface {
 	NotifyLibraryChanged()
+	WakePool()
 }
 
 // SubtitleExporter writes a movie's subtitles beside its exported .strm file.
@@ -51,7 +61,11 @@ type SubtitleExporter interface {
 	Export(ctx context.Context, movieID int, target subtitlemeta.Target) (int, error)
 }
 
-const defaultDirCacheTTL = 45 * time.Second
+const (
+	defaultDirCacheTTL = 45 * time.Second
+	maxDirCacheEntries = 128
+	maxDirCacheFiles   = 20_000
+)
 
 type dirCacheEntry struct {
 	files     []pan.File
@@ -62,14 +76,13 @@ type dirCacheEntry struct {
 type Service struct {
 	db            *ent.Client
 	drive         *drive.Drive
-	discover      Discoverer
+	metadata      MetadataSource
 	images        *mediaimage.Cache
 	notifier      Notifier
 	subtitles     SubtitleExporter
 	subtitleQueue *SubtitleQueue
-	artwork       syncx.ContextLock
 
-	dirMu    sync.RWMutex
+	dirMu    sync.Mutex
 	dirCache map[string]dirCacheEntry
 
 	exportMgr     *export.Manager
@@ -90,11 +103,11 @@ type Dependencies struct {
 }
 
 // New installs dependencies before starting subtitle workers.
-func New(db *ent.Client, d *drive.Drive, discover Discoverer, images *mediaimage.Cache, notifier Notifier, deps Dependencies) *Service {
+func New(db *ent.Client, d *drive.Drive, metadata MetadataSource, images *mediaimage.Cache, notifier Notifier, deps Dependencies) *Service {
 	service := &Service{
 		db:            db,
 		drive:         d,
-		discover:      discover,
+		metadata:      metadata,
 		images:        images,
 		notifier:      notifier,
 		dirCache:      make(map[string]dirCacheEntry),
@@ -125,12 +138,12 @@ func (service *Service) Close() {
 
 // TryLockArtwork attempts to acquire the artwork lock for cache maintenance.
 func (service *Service) TryLockArtwork() bool {
-	return service.artwork.TryLock()
+	return service.images.TryLockArtwork()
 }
 
 // UnlockArtwork releases the artwork lock.
 func (service *Service) UnlockArtwork() {
-	service.artwork.Unlock()
+	service.images.UnlockArtwork()
 }
 
 // Artwork reads cached artwork bytes by key.
@@ -145,65 +158,102 @@ func (service *Service) begin(ctx context.Context, input MetadataPayload) (drive
 	return service.drive.OpenSource(ctx, input.Source)
 }
 
-// Scrape processes a movie scrape task.
+// Scrape runs one recoverable movie workflow: metadata, artwork, then export.
 func (service *Service) Scrape(ctx context.Context, job tasks.Job) error {
-	input, err := tasks.DecodePayload[MetadataPayload](job.Payload)
+	input, err := tasks.DecodePayload[Payload](job.Payload)
 	if err != nil {
 		return err
 	}
-	input.Code = codeid.Normalize(input.Code)
-	// A committed cover job means the metadata transaction already succeeded.
-	queued, err := service.db.Task.Query().Where(task.TypeEQ(tasks.KindCover.String()), func(s *sql.Selector) {
-		s.Where(sqljson.ValueEQ(task.FieldPayload, job.ID, sqljson.Path("scrape_task_id")))
-	}).Exist(ctx)
-	if err != nil {
-		return fmt.Errorf("find queued artwork: %w", err)
-	}
-	if queued {
+	if input.Completed {
 		return nil
 	}
-	sess, err := service.begin(ctx, input)
+	input.Code = codeid.Normalize(input.Code)
+	sess, err := service.begin(ctx, input.MetadataPayload)
 	if err != nil {
 		return err
 	}
-	files, err := service.scrapeFiles(ctx, input)
+	files, err := service.scrapeFiles(ctx, input.MetadataPayload)
 	if err != nil {
 		return err
 	}
 	if len(files) == 0 {
 		return nil
 	}
-	record, err := service.db.Movie.Query().Where(movie.IDEQ(input.MovieID),
-		movie.HasFilesWith(database.LibraryFiles(input.Source))).WithActors().WithTags().Only(ctx)
+	current, err := service.db.Movie.Query().Where(movie.IDEQ(input.MovieID)).Select(movie.FieldID, movie.FieldManualCode).Only(ctx)
 	if err != nil {
-		return fmt.Errorf("load indexed movie for metadata: %w", err)
+		return err
 	}
-	cover := CoverPayload{MetadataPayload: input, ScrapeTaskID: job.ID}
-	if record.ScrapeStatus == movie.ScrapeStatusDone {
-		cover.Document = MovieNFO(record)
-		artwork := MovieArtwork(record)
-		cover.Artwork = &artwork
-	} else {
-		if id := domain.ValueOrZero(record.JavdbID); id != "" {
-			cover.JavDBID = id
-		}
-		if err := service.loadCatalogueCover(ctx, &cover); err != nil {
+	if current.ManualCode != input.ManualCode {
+		return domain.E(domain.KindConflict, "影片番号已纠正，请使用新的刮削任务", nil)
+	}
+	if !input.MetadataReady {
+		if err := service.prepareMetadata(ctx, sess, job.ID, &input); err != nil {
 			return err
 		}
 	}
-	cover.Code = codeid.Normalize(cover.Document.Code)
-	cover.Document.Code = cover.Code
-	encoded, err := tasks.EncodePayload(cover)
+	if err := tasks.Checkpoint(ctx, service.db); err != nil {
+		return err
+	}
+	if err := service.prepareArtwork(ctx, job.ID, &input); err != nil {
+		return err
+	}
+	if err := tasks.Checkpoint(ctx, service.db); err != nil {
+		return err
+	}
+	subTask, err := service.publishMovie(ctx, sess, job, input)
+	if err != nil {
+		return err
+	}
+	if subTask != nil {
+		service.subtitleQueue.Enqueue(*subTask)
+	}
+	return nil
+}
+
+func (service *Service) prepareMetadata(ctx context.Context, sess drive.Session, taskID int, input *Payload) error {
+	record, err := service.db.Movie.Query().Where(movie.IDEQ(input.MovieID),
+		movie.HasFilesWith(database.LibraryFiles(input.Source))).Only(ctx)
+	if err != nil {
+		return fmt.Errorf("load indexed movie for metadata: %w", err)
+	}
+	if record.ScrapeStatus == movie.ScrapeStatusDone && !input.Rebuild {
+		input.Document, err = MovieNFO(record)
+		if err != nil {
+			return err
+		}
+		artwork := MovieArtwork(record)
+		cached, err := service.images.Exists(artwork)
+		if err != nil {
+			return err
+		}
+		if cached {
+			input.Artwork = &artwork
+		}
+		if record.MetadataSnapshot != nil {
+			input.PosterVersion = record.MetadataSnapshot.PosterVersion
+		}
+	} else {
+		if id := domain.ValueOrZero(record.JavdbID); id != "" {
+			input.JavDBID = id
+		}
+		if err := service.resolveMetadata(ctx, input); err != nil {
+			return err
+		}
+	}
+	input.Code = codeid.Normalize(input.Document.Code)
+	input.Document.Code = input.Code
+	input.MetadataReady = true
+	encoded, err := tasks.EncodePayload(input)
 	if err != nil {
 		return err
 	}
 	if err := sess.Commit(ctx, func(tx *ent.Tx) error {
-		if err := SaveMovieMetadata(ctx, tx, input.MovieID, cover.Document); err != nil {
+		if err := SaveMovieMetadata(ctx, tx, input.MovieID, input.Document); err != nil {
 			return err
 		}
-		return tx.Task.Create().SetType(tasks.KindCover.String()).SetPayload(encoded).Exec(ctx)
+		return tx.Task.UpdateOneID(taskID).SetPayload(encoded).Exec(ctx)
 	}); err != nil {
-		return fmt.Errorf("save movie metadata and queue artwork: %w", err)
+		return fmt.Errorf("save movie metadata checkpoint: %w", err)
 	}
 	if service.notifier != nil {
 		service.notifier.NotifyLibraryChanged()
@@ -212,7 +262,7 @@ func (service *Service) Scrape(ctx context.Context, job tasks.Job) error {
 }
 
 // Finished marks the movie scrape as failed inside the completion transaction
-// when a scrape or cover job fails. Failures change the library view; successes
+// when a scrape job fails. Failures change the library view; successes
 // only advance the download workflow projection.
 func (service *Service) Finished(ctx context.Context, tx *ent.Tx, job tasks.Job, result error) (tasks.Change, error) {
 	if result == nil {
@@ -222,11 +272,15 @@ func (service *Service) Finished(ctx context.Context, tx *ent.Tx, job tasks.Job,
 	if err != nil {
 		return 0, err
 	}
-	if err := tx.Movie.Update().Where(
+	update := tx.Movie.Update().Where(
 		movie.IDEQ(input.MovieID),
-		movie.ScrapeStatusNEQ(movie.ScrapeStatusDone),
+		movie.ManualCodeEQ(input.ManualCode),
 		movie.HasFilesWith(database.LibraryFiles(input.Source)),
-	).SetScrapeStatus(movie.ScrapeStatusFailed).Exec(ctx); err != nil {
+	)
+	if !input.Rebuild {
+		update.Where(movie.ScrapeStatusNEQ(movie.ScrapeStatusDone))
+	}
+	if err := update.SetScrapeStatus(movie.ScrapeStatusFailed).Exec(ctx); err != nil {
 		return 0, err
 	}
 	return tasks.ChangeLibrary, nil
@@ -302,24 +356,67 @@ func (service *Service) directoryEntries(ctx context.Context, sess drive.Session
 		key = src.AccountID + ":" + dirID
 	}
 
-	service.dirMu.RLock()
-	if entry, ok := service.dirCache[key]; ok && time.Now().Before(entry.expiresAt) {
-		service.dirMu.RUnlock()
+	service.dirMu.Lock()
+	service.pruneDirCache(time.Now())
+	entry, ok := service.dirCache[key]
+	service.dirMu.Unlock()
+	if ok {
 		return slices.Clone(entry.files), nil
 	}
-	service.dirMu.RUnlock()
 
 	files, err := drive.DirectoryEntries(ctx, sess, dirID)
 	if err != nil {
 		return nil, err
 	}
+	// Large directories are still read in full, but must not displace the entire cache.
+	if len(files) > maxDirCacheFiles {
+		return files, nil
+	}
 
 	service.dirMu.Lock()
+	now := time.Now()
 	service.dirCache[key] = dirCacheEntry{
 		files:     files,
-		expiresAt: time.Now().Add(defaultDirCacheTTL),
+		expiresAt: now.Add(defaultDirCacheTTL),
 	}
+	service.pruneDirCache(now)
 	service.dirMu.Unlock()
 
 	return slices.Clone(files), nil
+}
+
+// pruneDirCache reclaims expired listings and evicts the oldest listings when over budget.
+// The caller must hold dirMu. Idle caches remain bounded without a background worker.
+func (service *Service) pruneDirCache(now time.Time) {
+	fileCount := 0
+	for key, entry := range service.dirCache {
+		if !now.Before(entry.expiresAt) {
+			delete(service.dirCache, key)
+			continue
+		}
+		fileCount += len(entry.files)
+	}
+	for len(service.dirCache) > maxDirCacheEntries || fileCount > maxDirCacheFiles {
+		var oldestKey string
+		var oldestExpiry time.Time
+		for key, entry := range service.dirCache {
+			if oldestExpiry.IsZero() || entry.expiresAt.Before(oldestExpiry) {
+				oldestKey, oldestExpiry = key, entry.expiresAt
+			}
+		}
+		fileCount -= len(service.dirCache[oldestKey].files)
+		delete(service.dirCache, oldestKey)
+	}
+}
+
+func (service *Service) resolveMetadata(ctx context.Context, input *Payload) error {
+	result, err := service.metadata.Resolve(ctx, domain.MovieRef{Code: input.Code, JavDBID: input.JavDBID, Refresh: input.Rebuild})
+	if err != nil {
+		return err
+	}
+	input.Document = DetailNFO(result.Detail)
+	input.Document.Images = result.Images
+	input.Code = codeid.Normalize(input.Document.Code)
+	input.Document.Code = input.Code
+	return nil
 }

@@ -2,6 +2,7 @@ package domain
 
 // MovieRef uniquely identifies a movie reference across different metadata sources.
 type MovieRef struct {
+	Refresh bool   `json:"refresh,omitempty"`
 	Code    string `json:"code"`
 	JavDBID string `json:"javdb_id"`
 	Zone    Zone   `json:"zone,omitempty"`
@@ -87,15 +88,17 @@ type PreviewImage struct {
 
 // Actor is an actor attached to a movie.
 type Actor struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	NameZHT string `json:"name_zht"`
-	Gender  string `json:"gender"`
-	Avatar  string `json:"avatar"`
+	Provider string `json:"provider,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	NameZHT  string `json:"name_zht"`
+	Gender   string `json:"gender"`
+	Avatar   string `json:"avatar"`
 }
 
 // Tag is a content tag.
 type Tag struct {
+	Provider   string `json:"provider,omitempty"`
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	NameZHT    string `json:"name_zht"`
@@ -116,39 +119,46 @@ type TagCategory struct {
 }
 
 type Series struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	Provider string `json:"provider,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
 }
 
 type Maker struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	Provider string `json:"provider,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
 }
 
 type Director struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	Provider string `json:"provider,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
 }
 
 // Movie is the core domain movie model.
 type Movie struct {
-	ID            string         `json:"id"`
-	Code          string         `json:"code"`
-	Title         string         `json:"title"`
-	OriginTitle   string         `json:"origin_title"`
-	ReleaseDate   string         `json:"release_date"`
-	Duration      int            `json:"duration"`
-	Rating        float64        `json:"rating"`
-	Thumbnail     string         `json:"thumbnail"`
-	Cover         string         `json:"cover"`
-	PreviewImages []PreviewImage `json:"preview_images"`
-	PreviewVideo  string         `json:"preview_video"`
-	MagnetsCount  int            `json:"magnets_count"`
-	HasSubtitle   bool           `json:"has_subtitle"`
-	HasPreview    bool           `json:"has_preview"`
-	Actors        []Actor        `json:"actors"`
-	Tags          []Tag          `json:"tags"`
-	Series        *Series        `json:"series,omitempty"`
-	Maker         *Maker         `json:"maker,omitempty"`
-	Director      *Director      `json:"director,omitempty"`
+	Sources       []SourceID        `json:"sources,omitempty"`
+	FieldSources  map[string]string `json:"field_sources,omitempty"`
+	RatingSource  string            `json:"rating_source,omitempty"`
+	RatingMax     float64           `json:"rating_max,omitempty"`
+	ID            string            `json:"id"`
+	Code          string            `json:"code"`
+	Title         string            `json:"title"`
+	OriginTitle   string            `json:"origin_title"`
+	ReleaseDate   string            `json:"release_date"`
+	Duration      int               `json:"duration"`
+	Rating        float64           `json:"rating"`
+	Thumbnail     string            `json:"thumbnail"`
+	Cover         string            `json:"cover"`
+	PreviewImages []PreviewImage    `json:"preview_images"`
+	PreviewVideo  string            `json:"preview_video"`
+	MagnetsCount  int               `json:"magnets_count"`
+	HasSubtitle   bool              `json:"has_subtitle"`
+	HasPreview    bool              `json:"has_preview"`
+	Actors        []Actor           `json:"actors"`
+	Tags          []Tag             `json:"tags"`
+	Series        *Series           `json:"series,omitempty"`
+	Maker         *Maker            `json:"maker,omitempty"`
+	Director      *Director         `json:"director,omitempty"`
 }

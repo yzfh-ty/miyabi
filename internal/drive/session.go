@@ -19,6 +19,7 @@ type Session interface {
 	List(ctx context.Context, dirID string, offset int) (pan.FilePage, error)
 	Info(ctx context.Context, fileID string) (pan.FileInfo, error)
 	Read(ctx context.Context, pickCode string, limit int64) ([]byte, error)
+	WithSource(ctx context.Context, fn func() error) error
 	Commit(ctx context.Context, fn func(tx *ent.Tx) error) error
 	CommitAccount(ctx context.Context, fn func(tx *ent.Tx) error) error
 
@@ -219,6 +220,12 @@ func (s *sourceSession) OfflineTasks(ctx context.Context, page int) (pan.Offline
 }
 
 func (s *sourceSession) Commit(ctx context.Context, fn func(tx *ent.Tx) error) error {
+	return s.WithSource(ctx, func() error { return ent.WithTx(ctx, s.drive.database, fn) })
+}
+
+// WithSource excludes source changes without opening a database transaction.
+// The callback must not reenter session commits or change the active source.
+func (s *sourceSession) WithSource(ctx context.Context, fn func() error) error {
 	if err := s.drive.commit.Lock(ctx); err != nil {
 		return err
 	}
@@ -226,7 +233,7 @@ func (s *sourceSession) Commit(ctx context.Context, fn func(tx *ent.Tx) error) e
 	if _, err := s.drive.sourceState(s.source, s.version); err != nil {
 		return err
 	}
-	return ent.WithTx(ctx, s.drive.database, fn)
+	return fn()
 }
 
 func (s *sourceSession) CommitAccount(ctx context.Context, fn func(tx *ent.Tx) error) error {

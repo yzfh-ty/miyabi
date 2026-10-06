@@ -1,16 +1,18 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ppxb/miyabi/internal/domain"
-	sloggin "github.com/samber/slog-gin"
 )
 
 type HealthChecker interface {
@@ -22,6 +24,7 @@ type Dependencies struct {
 	Health         HealthChecker
 	Access         AccessGate
 	Catalogue      CatalogueManager
+	Metadata       MetadataManager
 	Drive          DriveManager
 	SidecarSync    SidecarSyncManager
 	Offline        OfflineManager
@@ -42,6 +45,9 @@ type Dependencies struct {
 func NewRouter(deps Dependencies) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
+	if deps.Logger == nil {
+		deps.Logger = slog.Default()
+	}
 
 	if len(deps.TrustedProxies) > 0 {
 		_ = router.SetTrustedProxies(deps.TrustedProxies)
@@ -50,7 +56,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	}
 
 	router.Use(
-		sloggin.NewWithFilters(deps.Logger, sloggin.IgnoreStatus(statusClientClosedRequest)),
+		requestLoggingMiddleware(deps.Logger),
 		recoveryMiddleware(deps.Logger),
 		errorMiddleware(deps.Logger),
 		securityHeadersMiddleware(),
@@ -75,6 +81,8 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	protected := api.Group("", authMiddleware(deps.Access))
 
 	settingsAPI := protected.Group("/settings", noStore())
+	settingsAPI.GET("/scraping", metadataSettingsHandler(deps.Metadata))
+	settingsAPI.PUT("/scraping", metadataUpdateHandler(deps.Metadata))
 	settingsAPI.GET("/system", dataInfoHandler(deps.Maintenance))
 	settingsAPI.DELETE("/cache", dataClearCacheHandler(deps.Maintenance))
 	settingsAPI.GET("/network", networkHandler(deps.Network))
@@ -87,11 +95,16 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	settingsAPI.PUT("/subscription", subscriptionSettingsUpdateHandler(deps.Monitor))
 
 	protected.GET("/library/movies", libraryMoviesHandler(deps.Library))
+	protected.GET("/library/movies/:id", libraryMovieHandler(deps.Library))
+	protected.POST("/library/movies/:id/scrape", libraryMovieScrapeHandler(deps.Library))
+	protected.GET("/library/movies/:id/previews/:index", libraryPreviewHandler(deps.Library, deps.Metadata))
 	protected.POST("/library/scan", libraryScanHandler(deps.Library, deps.Emby))
+	protected.POST("/library/rebuild", libraryRebuildHandler(deps.Library))
 	protected.GET("/library/artwork/:key", libraryArtworkHandler(deps.Artwork))
 
 	protected.GET("/tasks", noStore(), tasksHandler(deps.Tasks))
 	protected.POST("/tasks/:id/retry", taskRetryHandler(deps.Tasks))
+	protected.PUT("/tasks/library-control", taskLibraryControlHandler(deps.Tasks))
 	protected.GET("/tasks/events", taskEventsHandler(deps.Tasks))
 	protected.GET("/offline/tasks", noStore(), offlineActivityHandler(deps.Offline))
 
@@ -113,12 +126,10 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	protected.GET("/discover/search", discoverSearchHandler(deps.Catalogue))
 	protected.GET("/discover/tags", discoverTagsHandler(deps.Catalogue))
 	protected.GET("/discover/movies/:id", discoverMovieHandler(deps.Catalogue))
+	protected.GET("/discover/movies/resolve", discoverResolveMovieHandler(deps.Catalogue))
 	protected.GET("/discover/movies/:id/magnets", discoverMagnetsHandler(deps.Catalogue))
 	protected.POST("/discover/movies/:id/offline", offlineAddHandler(deps.Offline))
 	protected.GET("/image", imageHandler(deps.Catalogue))
-	protected.GET("/javdb/route", javdbRouteHandler(deps.Catalogue))
-	protected.PUT("/javdb/route", javdbSelectRouteHandler(deps.Catalogue))
-	protected.POST("/javdb/reselect", javdbReselectHandler(deps.Catalogue))
 
 	panAPI := protected.Group("/pan", noStore())
 	panAPI.GET("/account", panAccountHandler(deps.Drive))
@@ -138,24 +149,58 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	return router
 }
 
+// Vite's default output names contain an eight-character content hash.
+var hashedFrontendAsset = regexp.MustCompile(`^assets/.+-[A-Za-z0-9_-]{8}\.[^/]+$`)
+
 func installFrontend(router *gin.Engine, frontend fs.FS) {
 	fileServer := http.FileServer(http.FS(frontend))
+	indexHTML, indexErr := fs.ReadFile(frontend, "index.html")
+	serveIndex := func(c *gin.Context) {
+		if indexErr != nil {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		http.ServeContent(c.Writer, c.Request, "index.html", time.Time{}, bytes.NewReader(indexHTML))
+	}
 	router.NoRoute(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+		if c.Request.URL.Path == "/api" || strings.HasPrefix(c.Request.URL.Path, "/api/") {
 			c.Error(domain.E(domain.KindNotFound, "not found", nil))
 			return
 		}
-
-		requestedPath := strings.TrimPrefix(c.Request.URL.Path, "/")
-		if requestedPath != "" {
-			if _, err := fs.Stat(frontend, requestedPath); err == nil {
-				fileServer.ServeHTTP(c.Writer, c.Request)
-				return
-			}
+		c.Header("Cache-Control", "no-cache")
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Header("Allow", "GET, HEAD")
+			c.AbortWithStatus(http.StatusMethodNotAllowed)
+			return
 		}
 
-		c.Request.URL.Path = "/"
-		fileServer.ServeHTTP(c.Writer, c.Request)
+		requestedPath := strings.TrimSuffix(strings.TrimPrefix(c.Request.URL.Path, "/"), "/")
+		if requestedPath == "" || requestedPath == "index.html" {
+			serveIndex(c)
+			return
+		}
+		if !fs.ValidPath(requestedPath) {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		if info, err := fs.Stat(frontend, requestedPath); err == nil {
+			if info.IsDir() {
+				c.AbortWithStatus(http.StatusNotFound)
+				return
+			}
+			if hashedFrontendAsset.MatchString(requestedPath) {
+				c.Header("Cache-Control", "public, max-age=31536000, immutable")
+			}
+			fileServer.ServeHTTP(c.Writer, c.Request)
+			return
+		}
+		// Missing assets must not receive an HTML response or immutable caching.
+		if requestedPath == "assets" || strings.HasPrefix(requestedPath, "assets/") || path.Ext(requestedPath) != "" {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+
+		serveIndex(c)
 	})
 }
 

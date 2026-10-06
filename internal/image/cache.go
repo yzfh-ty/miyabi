@@ -2,6 +2,7 @@ package image
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/disintegration/imaging"
+	"github.com/ppxb/miyabi/internal/domain"
+	"github.com/ppxb/miyabi/internal/syncx"
 	_ "golang.org/x/image/webp" // Register WebP decoding for covers and NFO artwork.
 	"golang.org/x/sync/singleflight"
 )
@@ -20,7 +23,16 @@ const URLPrefix = "/api/library/artwork/"
 // Cache instances sharing a destination also share its in-flight write.
 var imageWrites singleflight.Group
 
-type Cache struct{ directory string }
+type Cache struct {
+	directory string
+	artwork   syncx.ContextLock
+}
+
+// Hold the artwork lock from cache writes through the commit of their database
+// references. Pruning takes the same lock before reading those references.
+func (cache *Cache) LockArtwork(ctx context.Context) error { return cache.artwork.Lock(ctx) }
+func (cache *Cache) TryLockArtwork() bool                  { return cache.artwork.TryLock() }
+func (cache *Cache) UnlockArtwork()                        { cache.artwork.Unlock() }
 
 type Artwork struct {
 	Poster    string `json:"poster"`
@@ -36,14 +48,35 @@ func NewCache(dataDir string) (*Cache, error) {
 	return &Cache{directory: directory}, nil
 }
 
-func (cache *Cache) FromCover(body []byte) (Artwork, error) {
+func (cache *Cache) FromCover(body []byte, layout domain.CoverLayout) (Artwork, error) {
 	cover, err := imaging.Decode(bytes.NewReader(body), imaging.AutoOrientation(true))
 	if err != nil {
 		return Artwork{}, fmt.Errorf("decode cover image: %w", err)
 	}
-	size := cover.Bounds().Size()
-	poster := imaging.CropAnchor(cover, min(size.X, size.Y*2/3), size.Y, imaging.Right)
+	poster, err := cropPoster(cover, layout)
+	if err != nil {
+		return Artwork{}, err
+	}
 	return cache.saveArtwork(poster, cover)
+}
+
+// RecropPoster upgrades a generated poster from the cached full cover, keeping
+// the original fanart and thumbnail bytes and URLs intact.
+func (cache *Cache) RecropPoster(artwork Artwork, layout domain.CoverLayout) (Artwork, error) {
+	body, err := cache.ReadURL(artwork.Fanart)
+	if err != nil {
+		return Artwork{}, fmt.Errorf("read cover for poster: %w", err)
+	}
+	cover, err := imaging.Decode(bytes.NewReader(body), imaging.AutoOrientation(true))
+	if err != nil {
+		return Artwork{}, fmt.Errorf("decode cover for poster: %w", err)
+	}
+	poster, err := cropPoster(cover, layout)
+	if err != nil {
+		return Artwork{}, err
+	}
+	artwork.Poster, err = cache.save(poster)
+	return artwork, err
 }
 
 func (cache *Cache) Restore(poster, fanart []byte) (Artwork, error) {
@@ -51,9 +84,12 @@ func (cache *Cache) Restore(poster, fanart []byte) (Artwork, error) {
 	if err != nil {
 		return Artwork{}, fmt.Errorf("decode NFO poster: %w", err)
 	}
-	fanartImage, err := imaging.Decode(bytes.NewReader(fanart), imaging.AutoOrientation(true))
-	if err != nil {
-		return Artwork{}, fmt.Errorf("decode NFO fanart: %w", err)
+	fanartImage := posterImage
+	if !bytes.Equal(poster, fanart) {
+		fanartImage, err = imaging.Decode(bytes.NewReader(fanart), imaging.AutoOrientation(true))
+		if err != nil {
+			return Artwork{}, fmt.Errorf("decode NFO fanart: %w", err)
+		}
 	}
 	return cache.saveArtwork(posterImage, fanartImage)
 }
@@ -61,7 +97,7 @@ func (cache *Cache) Restore(poster, fanart []byte) (Artwork, error) {
 func (cache *Cache) saveArtwork(poster, fanart stdimage.Image) (Artwork, error) {
 	var artwork Artwork
 	var err error
-	artwork.Poster, err = cache.save(imaging.Fit(poster, 800, 1200, imaging.Lanczos))
+	artwork.Poster, err = cache.save(poster)
 	if err != nil {
 		return Artwork{}, err
 	}

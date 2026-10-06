@@ -9,6 +9,10 @@ const statusLabels = {
 
 export function scanStatus(task: ScanTask) {
   if (!isTaskActive(task)) return statusLabels[task.status]
+  if (task.paused) return task.status === 'running' ? '正在保存进度并暂停' : '已暂停'
+  if (task.retry_at || (task.status === 'queued' && task.scan.metadata_retrying)) {
+    return '等待自动重试'
+  }
   const stage = scanStage(task)
   if (task.scan.metadata_total > 0) {
     if (task.status === 'queued') return '等待刮削'
@@ -25,7 +29,11 @@ export function scanStage(task: ScanTask): ScanTask['scan']['stage'] {
 }
 
 export function scanCount(task: ScanTask) {
-  return task.scan.metadata_total > 0
-    ? `${task.scan.metadata_completed} / ${task.scan.metadata_total} 部`
-    : `识别到 ${task.scan.movies} 部`
+  const count =
+    task.scan.metadata_total > 0
+      ? `${task.scan.metadata_completed} / ${task.scan.metadata_total} 部`
+      : `识别到 ${task.scan.movies} 部`
+  const retrying = task.scan.metadata_retrying ?? 0
+  const failed = task.scan.metadata_failed ?? 0
+  return `${count}${retrying ? ` · ${retrying} 部等待重试` : ''}${failed ? ` · ${failed} 部失败` : ''}`
 }

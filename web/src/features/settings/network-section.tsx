@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { GlobeIcon, LoaderCircleIcon, RefreshCwIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { describeApiError } from '@/api/client'
 import {
   type NetworkProbeResult,
   type NetworkTestResponse,
@@ -36,7 +37,6 @@ export function NetworkSection() {
   function handleToggle(checked: boolean) {
     if (checked) {
       setUserEnabled(true)
-      setTimeout(() => inputRef.current?.focus(), 50)
     } else {
       if (config?.enabled) {
         updateConfig.mutate(
@@ -48,7 +48,7 @@ export function NetworkSection() {
               toast.success('已关闭网络代理')
             },
             onError: error => {
-              toast.error(error instanceof Error ? error.message : '关闭网络代理失败')
+              toast.error(describeApiError(error))
             }
           }
         )
@@ -77,7 +77,7 @@ export function NetworkSection() {
           )
         },
         onError: error => {
-          toast.error(error instanceof Error ? error.message : '保存网络代理失败')
+          toast.error(describeApiError(error))
         }
       }
     )
@@ -95,7 +95,7 @@ export function NetworkSection() {
       {
         onSuccess: showProbeResult,
         onError: error => {
-          toast.error(error instanceof Error ? error.message : '连通性测试失败')
+          toast.error(describeApiError(error))
         }
       }
     )
@@ -103,7 +103,7 @@ export function NetworkSection() {
 
   return (
     <SettingsSection icon={<GlobeIcon className="size-4" />} title="网络代理">
-      <SettingRow title="代理服务" description="仅为 JavDB 与 JavBus 提供网络代理" inline>
+      <SettingRow title="启用代理服务" description="将代理除 115 以外的所有网络请求" inline>
         <Switch checked={isEnabled} disabled={disabled} onCheckedChange={handleToggle} />
       </SettingRow>
 
@@ -112,6 +112,7 @@ export function NetworkSection() {
           <SettingRow title="代理地址" description="支持 HTTP、HTTPS 与 SOCKS5 代理协议">
             <Input
               ref={inputRef}
+              autoFocus={userEnabled === true}
               type="text"
               value={url}
               placeholder="http://127.0.0.1:7890"

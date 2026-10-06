@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiGet, apiPost } from '@/api/client'
+import type { DiscoverMovieDetail } from '@/api/discover'
+import { invalidateMovieStates } from '@/api/movie-states'
 import { panKeys, type PanAccountStatus } from '@/api/pan'
 import { taskKeys, type LibrarySource, type ScanTask, type Task } from '@/api/tasks'
 
 export const LIBRARY_PAGE_SIZE = 20
 
-export type LibraryEntity = { id?: string; name: string }
+export type LibraryEntity = { provider?: string; id?: string; name: string }
 
 export type LibraryMovie = {
   id: number
@@ -23,7 +25,7 @@ export type LibraryMovie = {
   series?: LibraryEntity
   director?: LibraryEntity
   actors: LibraryEntity[]
-  tags: Array<{ id: number; javdb_id: string; name: string }>
+  tags: Array<{ id: number; provider: string; source_id: string; name: string }>
   scrape_status: 'pending' | 'done' | 'failed'
 }
 
@@ -37,7 +39,21 @@ type LibraryPage = {
 
 export const libraryKeys = {
   all: ['library'] as const,
+  detail: (id: number) => ['library', 'detail', id] as const,
   movies: (page: number) => ['library', 'movies', page] as const
+}
+
+export type LibraryMovieDetail = Omit<DiscoverMovieDetail, 'release_status'> & {
+  library_id: number
+  scrape_status: LibraryMovie['scrape_status']
+}
+
+export function useLibraryMovie(id: number) {
+  return useQuery({
+    queryKey: libraryKeys.detail(id),
+    queryFn: ({ signal }) =>
+      apiGet<LibraryMovieDetail>(`/api/library/movies/${id}`, undefined, signal)
+  })
 }
 
 export function useLibraryMovies(page: number) {
@@ -51,7 +67,8 @@ export function useLibraryMovies(page: number) {
 export function useStartLibraryScan() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: () => apiPost<ScanTask>('/api/library/scan'),
+    mutationFn: (rebuild: boolean) =>
+      apiPost<ScanTask>(rebuild ? '/api/library/rebuild' : '/api/library/scan'),
     onSuccess: task => {
       const account = queryClient.getQueryData<PanAccountStatus>(panKeys.account)
       if (
@@ -66,6 +83,24 @@ export function useStartLibraryScan() {
         ...(tasks ?? []).filter(item => item.id !== task.id)
       ])
       return queryClient.invalidateQueries({ queryKey: taskKeys.all })
+    }
+  })
+}
+
+export function useRescrapeLibraryMovie(id: number) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (code?: string) => apiPost<ScanTask>(`/api/library/movies/${id}/scrape`, { code }),
+    onSuccess: async task => {
+      queryClient.setQueryData<Task[]>(taskKeys.all, tasks => [
+        task,
+        ...(tasks ?? []).filter(item => item.id !== task.id)
+      ])
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: libraryKeys.all }),
+        queryClient.invalidateQueries({ queryKey: taskKeys.all }),
+        invalidateMovieStates(queryClient)
+      ])
     }
   })
 }

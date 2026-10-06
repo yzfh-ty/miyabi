@@ -8,31 +8,33 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/ent/file"
 	"github.com/ppxb/miyabi/internal/ent/movie"
+	"github.com/ppxb/miyabi/internal/ent/predicate"
+	"github.com/ppxb/miyabi/internal/ent/task"
 	"github.com/ppxb/miyabi/internal/export"
 	mediaimage "github.com/ppxb/miyabi/internal/image"
 	"github.com/ppxb/miyabi/internal/library/scrape"
 	"github.com/ppxb/miyabi/internal/tasks"
 )
 
-// ReconcileScan executes reconciliation within a fresh transaction.
+const reconcileBatchSize = 100
+
+// ReconcileScan prepares cached exports before atomically committing index
+// cleanup, metadata jobs, Emby notifications and scan completion.
 func ReconcileScan(ctx context.Context, db *ent.Client, taskID int, payload *domain.ScanPayload, images *mediaimage.Cache, tasksSvc *tasks.Service, cfg export.Config, notifier scrape.MediaNotifier) error {
-	run := scanRun{scanner: &Scanner{images: images, tasksSvc: tasksSvc, notifier: notifier}, taskID: taskID, payload: payload}
-	return ent.WithTx(ctx, db, func(tx *ent.Tx) error { return run.reconcileTx(ctx, tx, cfg) })
+	run := scanRun{scanner: &Scanner{db: db, images: images, tasksSvc: tasksSvc, notifier: notifier, exportMgr: export.NewManager(cfg)}, taskID: taskID, payload: payload}
+	return run.reconcile(ctx)
 }
 
-// reconcileTx cleans up missing files, updates offline workflows, and schedules metadata scrape tasks.
-func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config) error {
-	policy, err := database.LoadDirectoryPolicy(ctx, tx.Client(), r.payload.Source)
-	if err != nil {
-		return err
-	}
+func (r *scanRun) staleFiles() predicate.File {
 	stale := file.And(database.LibraryFiles(r.payload.Source), file.ScanIDNEQ(r.payload.ScanID))
 	if r.payload.TargetID != "" {
 		if r.payload.TargetFile {
@@ -44,6 +46,74 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 			})
 		}
 	}
+	return stale
+}
+
+// Prepare only bounded pages of completed movies. Files that reconciliation
+// will delete must not participate in snapshot comparison or regenerated STRMs.
+func (r *scanRun) prepareReconcile(ctx context.Context, cfg export.Config) (map[int]time.Time, error) {
+	if r.payload.Rebuild {
+		return nil, nil
+	}
+	policy, err := database.LoadDirectoryPolicy(ctx, r.scanner.db, r.payload.Source)
+	if err != nil {
+		return nil, err
+	}
+	indexed := file.And(database.LibraryFiles(r.payload.Source), file.ScanIDEQ(r.payload.ScanID))
+	retained := file.And(database.LibraryFiles(r.payload.Source), file.Not(r.staleFiles()))
+	reusable := make(map[int]time.Time)
+	for after := 0; ; {
+		if err := tasks.Checkpoint(ctx, r.scanner.db); err != nil {
+			return nil, err
+		}
+		query := r.scanner.db.Movie.Query().Where(movie.IDGT(after), movie.ScrapeStatusEQ(movie.ScrapeStatusDone), movie.HasFilesWith(indexed)).
+			Order(movie.ByID()).Limit(reconcileBatchSize).
+			WithFiles(func(q *ent.FileQuery) { q.Where(retained) })
+		records, err := query.All(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("load completed scan movies: %w", err)
+		}
+		if len(records) == 0 {
+			return reusable, nil
+		}
+		for _, record := range records {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			record.Edges.Files = slices.DeleteFunc(record.Edges.Files, func(entry *ent.File) bool {
+				return !policy.ShouldScrape(r.payload.Source, entry.ParentID, entry.Path)
+			})
+			if len(record.Edges.Files) == 0 {
+				continue
+			}
+			if !scrape.SnapshotMatches(record, r.payload.Source) {
+				continue
+			}
+			cached, err := r.scanner.images.Exists(scrape.MovieArtwork(record))
+			if err != nil {
+				return nil, fmt.Errorf("check cached artwork: %w", err)
+			}
+			if !cached {
+				continue
+			}
+			if cfg.EmbyDir != "" {
+				if _, err := scrape.ExportLocalMovie(cfg.EmbyDir, cfg.PublicURL, cfg.STRMToken, record, r.scanner.images); err != nil {
+					return nil, fmt.Errorf("export local movie %s: %w", record.Code, err)
+				}
+			}
+			reusable[record.ID] = record.UpdatedAt
+		}
+		after = records[len(records)-1].ID
+	}
+}
+
+// reconcileTx performs database work only; removed exports are cleaned after commit.
+func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config, reusable map[int]time.Time) error {
+	policy, err := database.LoadDirectoryPolicy(ctx, tx.Client(), r.payload.Source)
+	if err != nil {
+		return err
+	}
+	stale := r.staleFiles()
 	staleMovies, err := tx.File.Query().Where(stale).QueryMovie().Select(movie.FieldID, movie.FieldCode).
 		WithFiles(func(q *ent.FileQuery) {
 			q.Where(stale).Select(file.FieldID, file.FieldMovieID, file.FieldParentID, file.FieldPath)
@@ -110,54 +180,93 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 			return err
 		}
 	}
-	moviesToScrape, err := tx.File.Query().Where(indexed).QueryMovie().
-		WithFiles(func(q *ent.FileQuery) { q.Where(database.LibraryFiles(r.payload.Source)) }).
-		WithActors().WithTags().All(ctx)
-	if err != nil {
-		return fmt.Errorf("find scanned metadata jobs: %w", err)
-	}
-	for _, record := range moviesToScrape {
-		record.Edges.Files = slices.DeleteFunc(record.Edges.Files, func(entry *ent.File) bool {
-			return !policy.ShouldScrape(r.payload.Source, entry.ParentID, entry.Path)
-		})
-		if len(record.Edges.Files) == 0 {
-			continue
+	queued := false
+	r.payload.ReusedTasks = nil
+	for after := 0; ; {
+		records, err := tx.Movie.Query().Where(movie.IDGT(after), movie.HasFilesWith(indexed)).
+			Select(movie.FieldID, movie.FieldCode, movie.FieldJavdbID, movie.FieldManualCode, movie.FieldUpdatedAt).
+			Order(movie.ByID()).Limit(reconcileBatchSize).
+			WithFiles(func(q *ent.FileQuery) {
+				q.Where(database.LibraryFiles(r.payload.Source)).Select(file.FieldMovieID, file.FieldParentID, file.FieldPath)
+			}).All(ctx)
+		if err != nil {
+			return fmt.Errorf("find scanned metadata jobs: %w", err)
 		}
-		if record.ScrapeStatus == movie.ScrapeStatusDone && scrape.SnapshotMatches(record, r.payload.Source) {
-			cached, err := r.scanner.images.Exists(scrape.MovieArtwork(record))
-			if err != nil {
-				return fmt.Errorf("check cached artwork: %w", err)
+		if len(records) == 0 {
+			break
+		}
+		builders := make([]*ent.TaskCreate, 0, len(records))
+		keys := make([]string, len(records))
+		for i, record := range records {
+			keys[i] = fmt.Sprintf("movie:%d", record.ID)
+		}
+		var active []struct {
+			ID          int    `json:"id"`
+			ResourceKey string `json:"resource_key"`
+			ParentID    int    `json:"parent_id"`
+		}
+		if err := tx.Task.Query().Where(task.TypeEQ(string(tasks.KindScrape)), task.ResourceKeyIn(keys...),
+			task.StatusIn(task.StatusQueued, task.StatusRunning), func(s *sql.Selector) {
+				if r.payload.Rebuild {
+					s.Where(sqljson.ValueEQ(task.FieldPayload, true, sqljson.Path("rebuild")))
+				}
+				// Publication checkpoints can precede the queue's final status update.
+				// Such a task can no longer pick up files found by this scan.
+				s.Where(sql.ExprP("coalesce(" + tasks.JSONExtract(s.C(task.FieldPayload), "completed") + ", 0) = 0"))
+				s.Where(sql.And(sqljson.ValueEQ(task.FieldPayload, r.payload.Source.AccountID, sqljson.Path("source", "account_id")),
+					sqljson.ValueEQ(task.FieldPayload, r.payload.Source.Directory.ID, sqljson.Path("source", "directory", "id"))))
+				s.Select(s.C(task.FieldID), s.C(task.FieldResourceKey), sql.As(tasks.JSONExtract(s.C(task.FieldPayload), "scan_task_id"), "parent_id"))
+			}).Order(task.ByID()).Select(task.FieldID).Scan(ctx, &active); err != nil {
+			return err
+		}
+		byKey := make(map[string]int, len(active))
+		for i, item := range active {
+			if _, found := byKey[item.ResourceKey]; !found {
+				byKey[item.ResourceKey] = i
 			}
-			if cached {
-				if cfg.EmbyDir != "" {
-					written, err := scrape.ExportLocalMovie(cfg.EmbyDir, cfg.PublicURL, cfg.STRMToken, record, r.scanner.images)
-					if err != nil {
-						return fmt.Errorf("export local movie %s: %w", record.Code, err)
-					}
-					if written && r.scanner.notifier != nil {
-						if err := r.scanner.notifier.NotifyUpdatedTx(ctx, tx, scrape.EmbyMovieDir(cfg.EmbyDir, record.Code)); err != nil {
-							return err
-						}
+		}
+		for _, record := range records {
+			if !slices.ContainsFunc(record.Edges.Files, func(entry *ent.File) bool {
+				return policy.ShouldScrape(r.payload.Source, entry.ParentID, entry.Path)
+			}) {
+				continue
+			}
+			if index, found := byKey[fmt.Sprintf("movie:%d", record.ID)]; found {
+				item := active[index]
+				if item.ParentID != r.taskID {
+					r.payload.ReusedTasks = append(r.payload.ReusedTasks, item.ID)
+				}
+				continue
+			}
+			if checked, ok := reusable[record.ID]; ok && checked.Equal(record.UpdatedAt) {
+				if cfg.EmbyDir != "" && r.scanner.notifier != nil {
+					// Also notify on a retry that finds complete exports: a previous
+					// attempt may have written them before its database commit failed.
+					if err := r.scanner.notifier.NotifyUpdatedTx(ctx, tx, scrape.EmbyMovieDir(cfg.EmbyDir, record.Code)); err != nil {
+						return err
 					}
 				}
 				continue
 			}
+			input := scrape.MetadataPayload{
+				Rebuild: r.payload.Rebuild,
+				Source:  r.payload.Source, ScanTaskID: r.taskID, MovieID: record.ID,
+				Code: record.Code, JavDBID: domain.ValueOrZero(record.JavdbID), ManualCode: record.ManualCode,
+			}
+			encoded, err := tasks.EncodePayload(input)
+			if err != nil {
+				return err
+			}
+			builders = append(builders, tx.Task.Create().SetType(tasks.KindScrape.String()).SetPayload(encoded).
+				SetResourceKey(fmt.Sprintf("movie:%d", record.ID)))
 		}
-
-		input := scrape.MetadataPayload{
-			Source:     r.payload.Source,
-			ScanTaskID: r.taskID,
-			MovieID:    record.ID,
-			Code:       record.Code,
-			JavDBID:    domain.ValueOrZero(record.JavdbID),
+		if len(builders) > 0 {
+			if err := tx.Task.CreateBulk(builders...).Exec(ctx); err != nil {
+				return fmt.Errorf("enqueue movie metadata: %w", err)
+			}
+			queued = true
 		}
-		encoded, err := tasks.EncodePayload(input)
-		if err != nil {
-			return err
-		}
-		if err := tx.Task.Create().SetType(tasks.KindScrape.String()).SetPayload(encoded).Exec(ctx); err != nil {
-			return fmt.Errorf("enqueue movie metadata: %w", err)
-		}
+		after = records[len(records)-1].ID
 	}
 	r.payload.Scan.Stage = "done"
 	if err := SaveScanProgress(ctx, tx.Task, r.taskID, *r.payload); err != nil {
@@ -167,6 +276,6 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 	if r.payload.Scan.RemovedFiles > 0 || r.payload.Scan.RemovedMovies > 0 {
 		change = tasks.ChangeLibrary
 	}
-	r.notifyAfterCommit(tx, change)
+	r.notifyAfterCommit(tx, change, queued)
 	return nil
 }

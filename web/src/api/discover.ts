@@ -1,7 +1,7 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
 
-import { apiGet, apiPost, apiPut } from './client'
+import { apiGet } from './client'
 import {
   createMovieDetailLoader,
   discoverKeys,
@@ -25,6 +25,7 @@ export type PreviewImage = {
 }
 
 export type Actor = {
+  provider?: string
   id: string
   name: string
   name_zht: string
@@ -33,6 +34,7 @@ export type Actor = {
 }
 
 export type Tag = {
+  provider?: string
   id: string
   name: string
   name_zht: string
@@ -40,11 +42,14 @@ export type Tag = {
 }
 
 export type NamedEntity = {
+  provider?: string
   id: string
   name: string
 }
 
 export type DiscoverMovie = {
+  readonly rating_source?: string
+  readonly rating_max?: number
   id: string
   code: string
   title: string
@@ -91,20 +96,6 @@ export type TagCategory = {
   id: string
   name: string
   tags: NamedEntity[]
-}
-
-export type JavDBRouteStatus = {
-  host: string
-  latency_ms: number
-  active: boolean
-  manual: boolean
-  candidates: JavDBRouteCandidate[]
-}
-
-export type JavDBRouteCandidate = {
-  host: string
-  latency_ms: number
-  status: 'untested' | 'available' | 'unavailable'
 }
 
 export type BrowseMoviesParams = {
@@ -165,6 +156,15 @@ export function useDiscoverMovie(id: string) {
   return query
 }
 
+export function useResolveDiscoverMovie(code: string) {
+  return useQuery({
+    queryKey: discoverKeys.resolve(code),
+    queryFn: ({ signal }) =>
+      apiGet<{ id: string }>('/api/discover/movies/resolve', { code }, signal),
+    staleTime: 5 * 60_000
+  })
+}
+
 export function useRecommendationMovie(id: string) {
   const queryClient = useQueryClient()
   const query = useQuery({ ...movieDetails.options(id), enabled: false })
@@ -221,30 +221,5 @@ export function useDiscoverTags(zone: JavDBZone) {
     queryKey: discoverKeys.tags(zone),
     queryFn: ({ signal }) => apiGet<TagCategory[]>('/api/discover/tags', { zone }, signal),
     staleTime: 24 * 60 * 60_000
-  })
-}
-
-export function useJavDBRoute() {
-  return useQuery({
-    queryKey: discoverKeys.route,
-    queryFn: ({ signal }) => apiGet<JavDBRouteStatus>('/api/javdb/route', undefined, signal)
-  })
-}
-
-export function useReselectJavDBRoute() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: () => apiPost<JavDBRouteStatus>('/api/javdb/reselect'),
-    onSuccess: status => queryClient.setQueryData(discoverKeys.route, status),
-    onError: () => queryClient.invalidateQueries({ queryKey: discoverKeys.route })
-  })
-}
-
-export function useSelectJavDBRoute() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (host: string) => apiPut<JavDBRouteStatus>('/api/javdb/route', { host }),
-    onSuccess: status => queryClient.setQueryData(discoverKeys.route, status),
-    onError: () => queryClient.invalidateQueries({ queryKey: discoverKeys.route })
   })
 }

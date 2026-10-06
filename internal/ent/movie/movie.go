@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 )
@@ -21,6 +22,10 @@ const (
 	FieldUpdatedAt = "updated_at"
 	// FieldCode holds the string denoting the code field in the database.
 	FieldCode = "code"
+	// FieldManualCode holds the string denoting the manual_code field in the database.
+	FieldManualCode = "manual_code"
+	// FieldCanonicalCode holds the string denoting the canonical_code field in the database.
+	FieldCanonicalCode = "canonical_code"
 	// FieldJavdbID holds the string denoting the javdb_id field in the database.
 	FieldJavdbID = "javdb_id"
 	// FieldTitle holds the string denoting the title field in the database.
@@ -49,6 +54,8 @@ const (
 	FieldPoster = "poster"
 	// FieldFanarts holds the string denoting the fanarts field in the database.
 	FieldFanarts = "fanarts"
+	// FieldMetadata holds the string denoting the metadata field in the database.
+	FieldMetadata = "metadata"
 	// FieldMetadataSnapshot holds the string denoting the metadata_snapshot field in the database.
 	FieldMetadataSnapshot = "metadata_snapshot"
 	// FieldScrapeStatus holds the string denoting the scrape_status field in the database.
@@ -95,6 +102,8 @@ var Columns = []string{
 	FieldCreatedAt,
 	FieldUpdatedAt,
 	FieldCode,
+	FieldManualCode,
+	FieldCanonicalCode,
 	FieldJavdbID,
 	FieldTitle,
 	FieldReleaseDate,
@@ -109,6 +118,7 @@ var Columns = []string{
 	FieldCover,
 	FieldPoster,
 	FieldFanarts,
+	FieldMetadata,
 	FieldMetadataSnapshot,
 	FieldScrapeStatus,
 }
@@ -132,7 +142,13 @@ func ValidColumn(column string) bool {
 	return false
 }
 
+// Note that the variables below are initialized by the runtime
+// package on the initialization of the application. Therefore,
+// it should be imported in the main as follows:
+//
+//	import _ "github.com/ppxb/miyabi/internal/ent/runtime"
 var (
+	Hooks [1]ent.Hook
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
@@ -141,6 +157,10 @@ var (
 	UpdateDefaultUpdatedAt func() time.Time
 	// CodeValidator is a validator for the "code" field. It is called by the builders before save.
 	CodeValidator func(string) error
+	// DefaultManualCode holds the default value on creation for the "manual_code" field.
+	DefaultManualCode string
+	// DefaultCanonicalCode holds the default value on creation for the "canonical_code" field.
+	DefaultCanonicalCode string
 	// DefaultTitle holds the default value on creation for the "title" field.
 	DefaultTitle string
 	// DefaultFanarts holds the default value on creation for the "fanarts" field.
@@ -195,6 +215,16 @@ func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByCode orders the results by the code field.
 func ByCode(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCode, opts...).ToFunc()
+}
+
+// ByManualCode orders the results by the manual_code field.
+func ByManualCode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldManualCode, opts...).ToFunc()
+}
+
+// ByCanonicalCode orders the results by the canonical_code field.
+func ByCanonicalCode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCanonicalCode, opts...).ToFunc()
 }
 
 // ByJavdbID orders the results by the javdb_id field.

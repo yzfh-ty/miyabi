@@ -4,12 +4,18 @@ import "time"
 
 // TaskInfo is the API presentation of a scan workflow and folded background tasks.
 type TaskInfo struct {
+	MovieID       int           `json:"movie_id,omitempty"`
+	Code          string        `json:"code,omitempty"`
+	Rebuild       bool          `json:"rebuild,omitempty"`
 	ID            int           `json:"id"`
 	Type          string        `json:"type"`
 	Status        string        `json:"status"`
 	Progress      int           `json:"progress"`
 	Error         *string       `json:"error,omitempty"`
 	CanRetry      bool          `json:"can_retry,omitempty"`
+	Paused        bool          `json:"paused,omitempty"`
+	RetryAt       *time.Time    `json:"retry_at,omitempty"`
+	RetryCount    int           `json:"retry_count,omitempty"`
 	CreatedAt     time.Time     `json:"created_at"`
 	UpdatedAt     time.Time     `json:"updated_at"`
 	Source        LibrarySource `json:"source"`

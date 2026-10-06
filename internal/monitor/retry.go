@@ -28,7 +28,7 @@ func (s *Service) RetryTask(ctx context.Context, id int) (domain.TaskInfo, error
 			return err
 		}
 		if payload.Batch.Failed != len(payload.FailedIDs) {
-			return domain.E(domain.KindConflict, "旧任务未保存完整的失败项编号，请重新选择失败的订阅入库", nil)
+			return domain.E(domain.KindConflict, "任务失败项记录不完整，请重新选择订阅入库", nil)
 		}
 		remaining := append(payload.FailedIDs, payload.IDs[min(len(payload.IDs), max(0, payload.Batch.Processed)):]...)
 		ids := make([]int, 0, len(remaining))
@@ -51,7 +51,8 @@ func (s *Service) RetryTask(ctx context.Context, id int) (domain.TaskInfo, error
 	if err != nil {
 		return domain.TaskInfo{}, err
 	}
-	s.tasks.Notify()
+	s.tasks.NotifyUI()
+	s.tasks.WakePool()
 	record, err := s.database.Task.Get(ctx, id)
 	if err != nil {
 		return domain.TaskInfo{}, err

@@ -16,6 +16,7 @@ import (
 	"github.com/ppxb/miyabi/internal/ent/actor"
 	"github.com/ppxb/miyabi/internal/ent/embynotification"
 	"github.com/ppxb/miyabi/internal/ent/file"
+	"github.com/ppxb/miyabi/internal/ent/metadatacache"
 	"github.com/ppxb/miyabi/internal/ent/movie"
 	"github.com/ppxb/miyabi/internal/ent/offlinedownload"
 	"github.com/ppxb/miyabi/internal/ent/predicate"
@@ -25,6 +26,7 @@ import (
 	"github.com/ppxb/miyabi/internal/ent/tag"
 	"github.com/ppxb/miyabi/internal/ent/task"
 	"github.com/ppxb/miyabi/internal/ent/viewedmovie"
+	"github.com/ppxb/miyabi/internal/nfo"
 )
 
 const (
@@ -39,6 +41,7 @@ const (
 	TypeActor            = "Actor"
 	TypeEmbyNotification = "EmbyNotification"
 	TypeFile             = "File"
+	TypeMetadataCache    = "MetadataCache"
 	TypeMovie            = "Movie"
 	TypeOfflineDownload  = "OfflineDownload"
 	TypeSetting          = "Setting"
@@ -57,7 +60,8 @@ type ActorMutation struct {
 	id            *int
 	created_at    *time.Time
 	updated_at    *time.Time
-	javdb_id      *string
+	provider      *string
+	source_id     *string
 	name          *string
 	name_zht      *string
 	gender        *actor.Gender
@@ -241,40 +245,76 @@ func (m *ActorMutation) ResetUpdatedAt() {
 	m.updated_at = nil
 }
 
-// SetJavdbID sets the "javdb_id" field.
-func (m *ActorMutation) SetJavdbID(s string) {
-	m.javdb_id = &s
+// SetProvider sets the "provider" field.
+func (m *ActorMutation) SetProvider(s string) {
+	m.provider = &s
 }
 
-// JavdbID returns the value of the "javdb_id" field in the mutation.
-func (m *ActorMutation) JavdbID() (r string, exists bool) {
-	v := m.javdb_id
+// Provider returns the value of the "provider" field in the mutation.
+func (m *ActorMutation) Provider() (r string, exists bool) {
+	v := m.provider
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldJavdbID returns the old "javdb_id" field's value of the Actor entity.
+// OldProvider returns the old "provider" field's value of the Actor entity.
 // If the Actor object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ActorMutation) OldJavdbID(ctx context.Context) (v string, err error) {
+func (m *ActorMutation) OldProvider(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldJavdbID is only allowed on UpdateOne operations")
+		return v, errors.New("OldProvider is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldJavdbID requires an ID field in the mutation")
+		return v, errors.New("OldProvider requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldJavdbID: %w", err)
+		return v, fmt.Errorf("querying old value for OldProvider: %w", err)
 	}
-	return oldValue.JavdbID, nil
+	return oldValue.Provider, nil
 }
 
-// ResetJavdbID resets all changes to the "javdb_id" field.
-func (m *ActorMutation) ResetJavdbID() {
-	m.javdb_id = nil
+// ResetProvider resets all changes to the "provider" field.
+func (m *ActorMutation) ResetProvider() {
+	m.provider = nil
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *ActorMutation) SetSourceID(s string) {
+	m.source_id = &s
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *ActorMutation) SourceID() (r string, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the Actor entity.
+// If the Actor object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActorMutation) OldSourceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *ActorMutation) ResetSourceID() {
+	m.source_id = nil
 }
 
 // SetName sets the "name" field.
@@ -535,15 +575,18 @@ func (m *ActorMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ActorMutation) Fields() []string {
-	fields := make([]string, 0, 7)
+	fields := make([]string, 0, 8)
 	if m.created_at != nil {
 		fields = append(fields, actor.FieldCreatedAt)
 	}
 	if m.updated_at != nil {
 		fields = append(fields, actor.FieldUpdatedAt)
 	}
-	if m.javdb_id != nil {
-		fields = append(fields, actor.FieldJavdbID)
+	if m.provider != nil {
+		fields = append(fields, actor.FieldProvider)
+	}
+	if m.source_id != nil {
+		fields = append(fields, actor.FieldSourceID)
 	}
 	if m.name != nil {
 		fields = append(fields, actor.FieldName)
@@ -569,8 +612,10 @@ func (m *ActorMutation) Field(name string) (ent.Value, bool) {
 		return m.CreatedAt()
 	case actor.FieldUpdatedAt:
 		return m.UpdatedAt()
-	case actor.FieldJavdbID:
-		return m.JavdbID()
+	case actor.FieldProvider:
+		return m.Provider()
+	case actor.FieldSourceID:
+		return m.SourceID()
 	case actor.FieldName:
 		return m.Name()
 	case actor.FieldNameZht:
@@ -592,8 +637,10 @@ func (m *ActorMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldCreatedAt(ctx)
 	case actor.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
-	case actor.FieldJavdbID:
-		return m.OldJavdbID(ctx)
+	case actor.FieldProvider:
+		return m.OldProvider(ctx)
+	case actor.FieldSourceID:
+		return m.OldSourceID(ctx)
 	case actor.FieldName:
 		return m.OldName(ctx)
 	case actor.FieldNameZht:
@@ -625,12 +672,19 @@ func (m *ActorMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetUpdatedAt(v)
 		return nil
-	case actor.FieldJavdbID:
+	case actor.FieldProvider:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetJavdbID(v)
+		m.SetProvider(v)
+		return nil
+	case actor.FieldSourceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
 		return nil
 	case actor.FieldName:
 		v, ok := value.(string)
@@ -730,8 +784,11 @@ func (m *ActorMutation) ResetField(name string) error {
 	case actor.FieldUpdatedAt:
 		m.ResetUpdatedAt()
 		return nil
-	case actor.FieldJavdbID:
-		m.ResetJavdbID()
+	case actor.FieldProvider:
+		m.ResetProvider()
+		return nil
+	case actor.FieldSourceID:
+		m.ResetSourceID()
 		return nil
 	case actor.FieldName:
 		m.ResetName()
@@ -2638,6 +2695,516 @@ func (m *FileMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown File edge %s", name)
 }
 
+// MetadataCacheMutation represents an operation that mutates the MetadataCache nodes in the graph.
+type MetadataCacheMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *int
+	provider      *string
+	code          *string
+	result        **domain.MovieMetadata
+	expires_at    *time.Time
+	clearedFields map[string]struct{}
+	done          bool
+	oldValue      func(context.Context) (*MetadataCache, error)
+	predicates    []predicate.MetadataCache
+}
+
+var _ ent.Mutation = (*MetadataCacheMutation)(nil)
+
+// metadatacacheOption allows management of the mutation configuration using functional options.
+type metadatacacheOption func(*MetadataCacheMutation)
+
+// newMetadataCacheMutation creates new mutation for the MetadataCache entity.
+func newMetadataCacheMutation(c config, op Op, opts ...metadatacacheOption) *MetadataCacheMutation {
+	m := &MetadataCacheMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeMetadataCache,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withMetadataCacheID sets the ID field of the mutation.
+func withMetadataCacheID(id int) metadatacacheOption {
+	return func(m *MetadataCacheMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *MetadataCache
+		)
+		m.oldValue = func(ctx context.Context) (*MetadataCache, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().MetadataCache.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withMetadataCache sets the old MetadataCache of the mutation.
+func withMetadataCache(node *MetadataCache) metadatacacheOption {
+	return func(m *MetadataCacheMutation) {
+		m.oldValue = func(context.Context) (*MetadataCache, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m MetadataCacheMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m MetadataCacheMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *MetadataCacheMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *MetadataCacheMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().MetadataCache.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetProvider sets the "provider" field.
+func (m *MetadataCacheMutation) SetProvider(s string) {
+	m.provider = &s
+}
+
+// Provider returns the value of the "provider" field in the mutation.
+func (m *MetadataCacheMutation) Provider() (r string, exists bool) {
+	v := m.provider
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProvider returns the old "provider" field's value of the MetadataCache entity.
+// If the MetadataCache object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MetadataCacheMutation) OldProvider(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProvider is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProvider requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProvider: %w", err)
+	}
+	return oldValue.Provider, nil
+}
+
+// ResetProvider resets all changes to the "provider" field.
+func (m *MetadataCacheMutation) ResetProvider() {
+	m.provider = nil
+}
+
+// SetCode sets the "code" field.
+func (m *MetadataCacheMutation) SetCode(s string) {
+	m.code = &s
+}
+
+// Code returns the value of the "code" field in the mutation.
+func (m *MetadataCacheMutation) Code() (r string, exists bool) {
+	v := m.code
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCode returns the old "code" field's value of the MetadataCache entity.
+// If the MetadataCache object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MetadataCacheMutation) OldCode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCode: %w", err)
+	}
+	return oldValue.Code, nil
+}
+
+// ResetCode resets all changes to the "code" field.
+func (m *MetadataCacheMutation) ResetCode() {
+	m.code = nil
+}
+
+// SetResult sets the "result" field.
+func (m *MetadataCacheMutation) SetResult(dm *domain.MovieMetadata) {
+	m.result = &dm
+}
+
+// Result returns the value of the "result" field in the mutation.
+func (m *MetadataCacheMutation) Result() (r *domain.MovieMetadata, exists bool) {
+	v := m.result
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldResult returns the old "result" field's value of the MetadataCache entity.
+// If the MetadataCache object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MetadataCacheMutation) OldResult(ctx context.Context) (v *domain.MovieMetadata, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldResult is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldResult requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldResult: %w", err)
+	}
+	return oldValue.Result, nil
+}
+
+// ClearResult clears the value of the "result" field.
+func (m *MetadataCacheMutation) ClearResult() {
+	m.result = nil
+	m.clearedFields[metadatacache.FieldResult] = struct{}{}
+}
+
+// ResultCleared returns if the "result" field was cleared in this mutation.
+func (m *MetadataCacheMutation) ResultCleared() bool {
+	_, ok := m.clearedFields[metadatacache.FieldResult]
+	return ok
+}
+
+// ResetResult resets all changes to the "result" field.
+func (m *MetadataCacheMutation) ResetResult() {
+	m.result = nil
+	delete(m.clearedFields, metadatacache.FieldResult)
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (m *MetadataCacheMutation) SetExpiresAt(t time.Time) {
+	m.expires_at = &t
+}
+
+// ExpiresAt returns the value of the "expires_at" field in the mutation.
+func (m *MetadataCacheMutation) ExpiresAt() (r time.Time, exists bool) {
+	v := m.expires_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldExpiresAt returns the old "expires_at" field's value of the MetadataCache entity.
+// If the MetadataCache object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MetadataCacheMutation) OldExpiresAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldExpiresAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldExpiresAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldExpiresAt: %w", err)
+	}
+	return oldValue.ExpiresAt, nil
+}
+
+// ResetExpiresAt resets all changes to the "expires_at" field.
+func (m *MetadataCacheMutation) ResetExpiresAt() {
+	m.expires_at = nil
+}
+
+// Where appends a list predicates to the MetadataCacheMutation builder.
+func (m *MetadataCacheMutation) Where(ps ...predicate.MetadataCache) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the MetadataCacheMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *MetadataCacheMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.MetadataCache, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *MetadataCacheMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *MetadataCacheMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (MetadataCache).
+func (m *MetadataCacheMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *MetadataCacheMutation) Fields() []string {
+	fields := make([]string, 0, 4)
+	if m.provider != nil {
+		fields = append(fields, metadatacache.FieldProvider)
+	}
+	if m.code != nil {
+		fields = append(fields, metadatacache.FieldCode)
+	}
+	if m.result != nil {
+		fields = append(fields, metadatacache.FieldResult)
+	}
+	if m.expires_at != nil {
+		fields = append(fields, metadatacache.FieldExpiresAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *MetadataCacheMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case metadatacache.FieldProvider:
+		return m.Provider()
+	case metadatacache.FieldCode:
+		return m.Code()
+	case metadatacache.FieldResult:
+		return m.Result()
+	case metadatacache.FieldExpiresAt:
+		return m.ExpiresAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *MetadataCacheMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case metadatacache.FieldProvider:
+		return m.OldProvider(ctx)
+	case metadatacache.FieldCode:
+		return m.OldCode(ctx)
+	case metadatacache.FieldResult:
+		return m.OldResult(ctx)
+	case metadatacache.FieldExpiresAt:
+		return m.OldExpiresAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown MetadataCache field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *MetadataCacheMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case metadatacache.FieldProvider:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProvider(v)
+		return nil
+	case metadatacache.FieldCode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCode(v)
+		return nil
+	case metadatacache.FieldResult:
+		v, ok := value.(*domain.MovieMetadata)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetResult(v)
+		return nil
+	case metadatacache.FieldExpiresAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetExpiresAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown MetadataCache field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *MetadataCacheMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *MetadataCacheMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *MetadataCacheMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown MetadataCache numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *MetadataCacheMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(metadatacache.FieldResult) {
+		fields = append(fields, metadatacache.FieldResult)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *MetadataCacheMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *MetadataCacheMutation) ClearField(name string) error {
+	switch name {
+	case metadatacache.FieldResult:
+		m.ClearResult()
+		return nil
+	}
+	return fmt.Errorf("unknown MetadataCache nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *MetadataCacheMutation) ResetField(name string) error {
+	switch name {
+	case metadatacache.FieldProvider:
+		m.ResetProvider()
+		return nil
+	case metadatacache.FieldCode:
+		m.ResetCode()
+		return nil
+	case metadatacache.FieldResult:
+		m.ResetResult()
+		return nil
+	case metadatacache.FieldExpiresAt:
+		m.ResetExpiresAt()
+		return nil
+	}
+	return fmt.Errorf("unknown MetadataCache field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *MetadataCacheMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *MetadataCacheMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *MetadataCacheMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *MetadataCacheMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *MetadataCacheMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *MetadataCacheMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *MetadataCacheMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown MetadataCache unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *MetadataCacheMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown MetadataCache edge %s", name)
+}
+
 // MovieMutation represents an operation that mutates the Movie nodes in the graph.
 type MovieMutation struct {
 	config
@@ -2647,6 +3214,8 @@ type MovieMutation struct {
 	created_at        *time.Time
 	updated_at        *time.Time
 	code              *string
+	manual_code       *string
+	canonical_code    *string
 	javdb_id          *string
 	title             *string
 	release_date      *time.Time
@@ -2664,6 +3233,7 @@ type MovieMutation struct {
 	poster            *string
 	fanarts           *[]string
 	appendfanarts     []string
+	metadata          **nfo.Movie
 	metadata_snapshot **domain.MetadataSnapshot
 	scrape_status     *movie.ScrapeStatus
 	clearedFields     map[string]struct{}
@@ -2888,6 +3458,78 @@ func (m *MovieMutation) OldCode(ctx context.Context) (v string, err error) {
 // ResetCode resets all changes to the "code" field.
 func (m *MovieMutation) ResetCode() {
 	m.code = nil
+}
+
+// SetManualCode sets the "manual_code" field.
+func (m *MovieMutation) SetManualCode(s string) {
+	m.manual_code = &s
+}
+
+// ManualCode returns the value of the "manual_code" field in the mutation.
+func (m *MovieMutation) ManualCode() (r string, exists bool) {
+	v := m.manual_code
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldManualCode returns the old "manual_code" field's value of the Movie entity.
+// If the Movie object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MovieMutation) OldManualCode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldManualCode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldManualCode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldManualCode: %w", err)
+	}
+	return oldValue.ManualCode, nil
+}
+
+// ResetManualCode resets all changes to the "manual_code" field.
+func (m *MovieMutation) ResetManualCode() {
+	m.manual_code = nil
+}
+
+// SetCanonicalCode sets the "canonical_code" field.
+func (m *MovieMutation) SetCanonicalCode(s string) {
+	m.canonical_code = &s
+}
+
+// CanonicalCode returns the value of the "canonical_code" field in the mutation.
+func (m *MovieMutation) CanonicalCode() (r string, exists bool) {
+	v := m.canonical_code
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCanonicalCode returns the old "canonical_code" field's value of the Movie entity.
+// If the Movie object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MovieMutation) OldCanonicalCode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCanonicalCode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCanonicalCode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCanonicalCode: %w", err)
+	}
+	return oldValue.CanonicalCode, nil
+}
+
+// ResetCanonicalCode resets all changes to the "canonical_code" field.
+func (m *MovieMutation) ResetCanonicalCode() {
+	m.canonical_code = nil
 }
 
 // SetJavdbID sets the "javdb_id" field.
@@ -3607,6 +4249,55 @@ func (m *MovieMutation) ResetFanarts() {
 	m.appendfanarts = nil
 }
 
+// SetMetadata sets the "metadata" field.
+func (m *MovieMutation) SetMetadata(n *nfo.Movie) {
+	m.metadata = &n
+}
+
+// Metadata returns the value of the "metadata" field in the mutation.
+func (m *MovieMutation) Metadata() (r *nfo.Movie, exists bool) {
+	v := m.metadata
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMetadata returns the old "metadata" field's value of the Movie entity.
+// If the Movie object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MovieMutation) OldMetadata(ctx context.Context) (v *nfo.Movie, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMetadata is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMetadata requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMetadata: %w", err)
+	}
+	return oldValue.Metadata, nil
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (m *MovieMutation) ClearMetadata() {
+	m.metadata = nil
+	m.clearedFields[movie.FieldMetadata] = struct{}{}
+}
+
+// MetadataCleared returns if the "metadata" field was cleared in this mutation.
+func (m *MovieMutation) MetadataCleared() bool {
+	_, ok := m.clearedFields[movie.FieldMetadata]
+	return ok
+}
+
+// ResetMetadata resets all changes to the "metadata" field.
+func (m *MovieMutation) ResetMetadata() {
+	m.metadata = nil
+	delete(m.clearedFields, movie.FieldMetadata)
+}
+
 // SetMetadataSnapshot sets the "metadata_snapshot" field.
 func (m *MovieMutation) SetMetadataSnapshot(ds *domain.MetadataSnapshot) {
 	m.metadata_snapshot = &ds
@@ -3942,7 +4633,7 @@ func (m *MovieMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *MovieMutation) Fields() []string {
-	fields := make([]string, 0, 19)
+	fields := make([]string, 0, 22)
 	if m.created_at != nil {
 		fields = append(fields, movie.FieldCreatedAt)
 	}
@@ -3951,6 +4642,12 @@ func (m *MovieMutation) Fields() []string {
 	}
 	if m.code != nil {
 		fields = append(fields, movie.FieldCode)
+	}
+	if m.manual_code != nil {
+		fields = append(fields, movie.FieldManualCode)
+	}
+	if m.canonical_code != nil {
+		fields = append(fields, movie.FieldCanonicalCode)
 	}
 	if m.javdb_id != nil {
 		fields = append(fields, movie.FieldJavdbID)
@@ -3994,6 +4691,9 @@ func (m *MovieMutation) Fields() []string {
 	if m.fanarts != nil {
 		fields = append(fields, movie.FieldFanarts)
 	}
+	if m.metadata != nil {
+		fields = append(fields, movie.FieldMetadata)
+	}
 	if m.metadata_snapshot != nil {
 		fields = append(fields, movie.FieldMetadataSnapshot)
 	}
@@ -4014,6 +4714,10 @@ func (m *MovieMutation) Field(name string) (ent.Value, bool) {
 		return m.UpdatedAt()
 	case movie.FieldCode:
 		return m.Code()
+	case movie.FieldManualCode:
+		return m.ManualCode()
+	case movie.FieldCanonicalCode:
+		return m.CanonicalCode()
 	case movie.FieldJavdbID:
 		return m.JavdbID()
 	case movie.FieldTitle:
@@ -4042,6 +4746,8 @@ func (m *MovieMutation) Field(name string) (ent.Value, bool) {
 		return m.Poster()
 	case movie.FieldFanarts:
 		return m.Fanarts()
+	case movie.FieldMetadata:
+		return m.Metadata()
 	case movie.FieldMetadataSnapshot:
 		return m.MetadataSnapshot()
 	case movie.FieldScrapeStatus:
@@ -4061,6 +4767,10 @@ func (m *MovieMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldUpdatedAt(ctx)
 	case movie.FieldCode:
 		return m.OldCode(ctx)
+	case movie.FieldManualCode:
+		return m.OldManualCode(ctx)
+	case movie.FieldCanonicalCode:
+		return m.OldCanonicalCode(ctx)
 	case movie.FieldJavdbID:
 		return m.OldJavdbID(ctx)
 	case movie.FieldTitle:
@@ -4089,6 +4799,8 @@ func (m *MovieMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldPoster(ctx)
 	case movie.FieldFanarts:
 		return m.OldFanarts(ctx)
+	case movie.FieldMetadata:
+		return m.OldMetadata(ctx)
 	case movie.FieldMetadataSnapshot:
 		return m.OldMetadataSnapshot(ctx)
 	case movie.FieldScrapeStatus:
@@ -4122,6 +4834,20 @@ func (m *MovieMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetCode(v)
+		return nil
+	case movie.FieldManualCode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetManualCode(v)
+		return nil
+	case movie.FieldCanonicalCode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCanonicalCode(v)
 		return nil
 	case movie.FieldJavdbID:
 		v, ok := value.(string)
@@ -4220,6 +4946,13 @@ func (m *MovieMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetFanarts(v)
+		return nil
+	case movie.FieldMetadata:
+		v, ok := value.(*nfo.Movie)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMetadata(v)
 		return nil
 	case movie.FieldMetadataSnapshot:
 		v, ok := value.(*domain.MetadataSnapshot)
@@ -4328,6 +5061,9 @@ func (m *MovieMutation) ClearedFields() []string {
 	if m.FieldCleared(movie.FieldPoster) {
 		fields = append(fields, movie.FieldPoster)
 	}
+	if m.FieldCleared(movie.FieldMetadata) {
+		fields = append(fields, movie.FieldMetadata)
+	}
 	if m.FieldCleared(movie.FieldMetadataSnapshot) {
 		fields = append(fields, movie.FieldMetadataSnapshot)
 	}
@@ -4381,6 +5117,9 @@ func (m *MovieMutation) ClearField(name string) error {
 	case movie.FieldPoster:
 		m.ClearPoster()
 		return nil
+	case movie.FieldMetadata:
+		m.ClearMetadata()
+		return nil
 	case movie.FieldMetadataSnapshot:
 		m.ClearMetadataSnapshot()
 		return nil
@@ -4400,6 +5139,12 @@ func (m *MovieMutation) ResetField(name string) error {
 		return nil
 	case movie.FieldCode:
 		m.ResetCode()
+		return nil
+	case movie.FieldManualCode:
+		m.ResetManualCode()
+		return nil
+	case movie.FieldCanonicalCode:
+		m.ResetCanonicalCode()
 		return nil
 	case movie.FieldJavdbID:
 		m.ResetJavdbID()
@@ -4442,6 +5187,9 @@ func (m *MovieMutation) ResetField(name string) error {
 		return nil
 	case movie.FieldFanarts:
 		m.ResetFanarts()
+		return nil
+	case movie.FieldMetadata:
+		m.ResetMetadata()
 		return nil
 	case movie.FieldMetadataSnapshot:
 		m.ResetMetadataSnapshot()
@@ -8631,7 +9379,8 @@ type TagMutation struct {
 	id            *int
 	created_at    *time.Time
 	updated_at    *time.Time
-	javdb_id      *string
+	provider      *string
+	source_id     *string
 	name          *string
 	name_zht      *string
 	category_id   *string
@@ -8814,40 +9563,76 @@ func (m *TagMutation) ResetUpdatedAt() {
 	m.updated_at = nil
 }
 
-// SetJavdbID sets the "javdb_id" field.
-func (m *TagMutation) SetJavdbID(s string) {
-	m.javdb_id = &s
+// SetProvider sets the "provider" field.
+func (m *TagMutation) SetProvider(s string) {
+	m.provider = &s
 }
 
-// JavdbID returns the value of the "javdb_id" field in the mutation.
-func (m *TagMutation) JavdbID() (r string, exists bool) {
-	v := m.javdb_id
+// Provider returns the value of the "provider" field in the mutation.
+func (m *TagMutation) Provider() (r string, exists bool) {
+	v := m.provider
 	if v == nil {
 		return
 	}
 	return *v, true
 }
 
-// OldJavdbID returns the old "javdb_id" field's value of the Tag entity.
+// OldProvider returns the old "provider" field's value of the Tag entity.
 // If the Tag object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *TagMutation) OldJavdbID(ctx context.Context) (v string, err error) {
+func (m *TagMutation) OldProvider(ctx context.Context) (v string, err error) {
 	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldJavdbID is only allowed on UpdateOne operations")
+		return v, errors.New("OldProvider is only allowed on UpdateOne operations")
 	}
 	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldJavdbID requires an ID field in the mutation")
+		return v, errors.New("OldProvider requires an ID field in the mutation")
 	}
 	oldValue, err := m.oldValue(ctx)
 	if err != nil {
-		return v, fmt.Errorf("querying old value for OldJavdbID: %w", err)
+		return v, fmt.Errorf("querying old value for OldProvider: %w", err)
 	}
-	return oldValue.JavdbID, nil
+	return oldValue.Provider, nil
 }
 
-// ResetJavdbID resets all changes to the "javdb_id" field.
-func (m *TagMutation) ResetJavdbID() {
-	m.javdb_id = nil
+// ResetProvider resets all changes to the "provider" field.
+func (m *TagMutation) ResetProvider() {
+	m.provider = nil
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *TagMutation) SetSourceID(s string) {
+	m.source_id = &s
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *TagMutation) SourceID() (r string, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the Tag entity.
+// If the Tag object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TagMutation) OldSourceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *TagMutation) ResetSourceID() {
+	m.source_id = nil
 }
 
 // SetName sets the "name" field.
@@ -9059,15 +9844,18 @@ func (m *TagMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *TagMutation) Fields() []string {
-	fields := make([]string, 0, 6)
+	fields := make([]string, 0, 7)
 	if m.created_at != nil {
 		fields = append(fields, tag.FieldCreatedAt)
 	}
 	if m.updated_at != nil {
 		fields = append(fields, tag.FieldUpdatedAt)
 	}
-	if m.javdb_id != nil {
-		fields = append(fields, tag.FieldJavdbID)
+	if m.provider != nil {
+		fields = append(fields, tag.FieldProvider)
+	}
+	if m.source_id != nil {
+		fields = append(fields, tag.FieldSourceID)
 	}
 	if m.name != nil {
 		fields = append(fields, tag.FieldName)
@@ -9090,8 +9878,10 @@ func (m *TagMutation) Field(name string) (ent.Value, bool) {
 		return m.CreatedAt()
 	case tag.FieldUpdatedAt:
 		return m.UpdatedAt()
-	case tag.FieldJavdbID:
-		return m.JavdbID()
+	case tag.FieldProvider:
+		return m.Provider()
+	case tag.FieldSourceID:
+		return m.SourceID()
 	case tag.FieldName:
 		return m.Name()
 	case tag.FieldNameZht:
@@ -9111,8 +9901,10 @@ func (m *TagMutation) OldField(ctx context.Context, name string) (ent.Value, err
 		return m.OldCreatedAt(ctx)
 	case tag.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
-	case tag.FieldJavdbID:
-		return m.OldJavdbID(ctx)
+	case tag.FieldProvider:
+		return m.OldProvider(ctx)
+	case tag.FieldSourceID:
+		return m.OldSourceID(ctx)
 	case tag.FieldName:
 		return m.OldName(ctx)
 	case tag.FieldNameZht:
@@ -9142,12 +9934,19 @@ func (m *TagMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetUpdatedAt(v)
 		return nil
-	case tag.FieldJavdbID:
+	case tag.FieldProvider:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
-		m.SetJavdbID(v)
+		m.SetProvider(v)
+		return nil
+	case tag.FieldSourceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
 		return nil
 	case tag.FieldName:
 		v, ok := value.(string)
@@ -9234,8 +10033,11 @@ func (m *TagMutation) ResetField(name string) error {
 	case tag.FieldUpdatedAt:
 		m.ResetUpdatedAt()
 		return nil
-	case tag.FieldJavdbID:
-		m.ResetJavdbID()
+	case tag.FieldProvider:
+		m.ResetProvider()
+		return nil
+	case tag.FieldSourceID:
+		m.ResetSourceID()
 		return nil
 	case tag.FieldName:
 		m.ResetName()
@@ -9337,22 +10139,26 @@ func (m *TagMutation) ResetEdge(name string) error {
 // TaskMutation represents an operation that mutates the Task nodes in the graph.
 type TaskMutation struct {
 	config
-	op            Op
-	typ           string
-	id            *int
-	created_at    *time.Time
-	updated_at    *time.Time
-	_type         *string
-	status        *task.Status
-	payload       *jsontext.Value
-	appendpayload jsontext.Value
-	progress      *int
-	addprogress   *int
-	error         *string
-	clearedFields map[string]struct{}
-	done          bool
-	oldValue      func(context.Context) (*Task, error)
-	predicates    []predicate.Task
+	op             Op
+	typ            string
+	id             *int
+	created_at     *time.Time
+	updated_at     *time.Time
+	_type          *string
+	status         *task.Status
+	payload        *jsontext.Value
+	appendpayload  jsontext.Value
+	progress       *int
+	addprogress    *int
+	retry_count    *int
+	addretry_count *int
+	retry_at       *time.Time
+	resource_key   *string
+	error          *string
+	clearedFields  map[string]struct{}
+	done           bool
+	oldValue       func(context.Context) (*Task, error)
+	predicates     []predicate.Task
 }
 
 var _ ent.Mutation = (*TaskMutation)(nil)
@@ -9704,6 +10510,147 @@ func (m *TaskMutation) ResetProgress() {
 	m.addprogress = nil
 }
 
+// SetRetryCount sets the "retry_count" field.
+func (m *TaskMutation) SetRetryCount(i int) {
+	m.retry_count = &i
+	m.addretry_count = nil
+}
+
+// RetryCount returns the value of the "retry_count" field in the mutation.
+func (m *TaskMutation) RetryCount() (r int, exists bool) {
+	v := m.retry_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRetryCount returns the old "retry_count" field's value of the Task entity.
+// If the Task object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TaskMutation) OldRetryCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRetryCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRetryCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRetryCount: %w", err)
+	}
+	return oldValue.RetryCount, nil
+}
+
+// AddRetryCount adds i to the "retry_count" field.
+func (m *TaskMutation) AddRetryCount(i int) {
+	if m.addretry_count != nil {
+		*m.addretry_count += i
+	} else {
+		m.addretry_count = &i
+	}
+}
+
+// AddedRetryCount returns the value that was added to the "retry_count" field in this mutation.
+func (m *TaskMutation) AddedRetryCount() (r int, exists bool) {
+	v := m.addretry_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRetryCount resets all changes to the "retry_count" field.
+func (m *TaskMutation) ResetRetryCount() {
+	m.retry_count = nil
+	m.addretry_count = nil
+}
+
+// SetRetryAt sets the "retry_at" field.
+func (m *TaskMutation) SetRetryAt(t time.Time) {
+	m.retry_at = &t
+}
+
+// RetryAt returns the value of the "retry_at" field in the mutation.
+func (m *TaskMutation) RetryAt() (r time.Time, exists bool) {
+	v := m.retry_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRetryAt returns the old "retry_at" field's value of the Task entity.
+// If the Task object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TaskMutation) OldRetryAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRetryAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRetryAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRetryAt: %w", err)
+	}
+	return oldValue.RetryAt, nil
+}
+
+// ClearRetryAt clears the value of the "retry_at" field.
+func (m *TaskMutation) ClearRetryAt() {
+	m.retry_at = nil
+	m.clearedFields[task.FieldRetryAt] = struct{}{}
+}
+
+// RetryAtCleared returns if the "retry_at" field was cleared in this mutation.
+func (m *TaskMutation) RetryAtCleared() bool {
+	_, ok := m.clearedFields[task.FieldRetryAt]
+	return ok
+}
+
+// ResetRetryAt resets all changes to the "retry_at" field.
+func (m *TaskMutation) ResetRetryAt() {
+	m.retry_at = nil
+	delete(m.clearedFields, task.FieldRetryAt)
+}
+
+// SetResourceKey sets the "resource_key" field.
+func (m *TaskMutation) SetResourceKey(s string) {
+	m.resource_key = &s
+}
+
+// ResourceKey returns the value of the "resource_key" field in the mutation.
+func (m *TaskMutation) ResourceKey() (r string, exists bool) {
+	v := m.resource_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldResourceKey returns the old "resource_key" field's value of the Task entity.
+// If the Task object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TaskMutation) OldResourceKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldResourceKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldResourceKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldResourceKey: %w", err)
+	}
+	return oldValue.ResourceKey, nil
+}
+
+// ResetResourceKey resets all changes to the "resource_key" field.
+func (m *TaskMutation) ResetResourceKey() {
+	m.resource_key = nil
+}
+
 // SetError sets the "error" field.
 func (m *TaskMutation) SetError(s string) {
 	m.error = &s
@@ -9787,7 +10734,7 @@ func (m *TaskMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *TaskMutation) Fields() []string {
-	fields := make([]string, 0, 7)
+	fields := make([]string, 0, 10)
 	if m.created_at != nil {
 		fields = append(fields, task.FieldCreatedAt)
 	}
@@ -9805,6 +10752,15 @@ func (m *TaskMutation) Fields() []string {
 	}
 	if m.progress != nil {
 		fields = append(fields, task.FieldProgress)
+	}
+	if m.retry_count != nil {
+		fields = append(fields, task.FieldRetryCount)
+	}
+	if m.retry_at != nil {
+		fields = append(fields, task.FieldRetryAt)
+	}
+	if m.resource_key != nil {
+		fields = append(fields, task.FieldResourceKey)
 	}
 	if m.error != nil {
 		fields = append(fields, task.FieldError)
@@ -9829,6 +10785,12 @@ func (m *TaskMutation) Field(name string) (ent.Value, bool) {
 		return m.Payload()
 	case task.FieldProgress:
 		return m.Progress()
+	case task.FieldRetryCount:
+		return m.RetryCount()
+	case task.FieldRetryAt:
+		return m.RetryAt()
+	case task.FieldResourceKey:
+		return m.ResourceKey()
 	case task.FieldError:
 		return m.Error()
 	}
@@ -9852,6 +10814,12 @@ func (m *TaskMutation) OldField(ctx context.Context, name string) (ent.Value, er
 		return m.OldPayload(ctx)
 	case task.FieldProgress:
 		return m.OldProgress(ctx)
+	case task.FieldRetryCount:
+		return m.OldRetryCount(ctx)
+	case task.FieldRetryAt:
+		return m.OldRetryAt(ctx)
+	case task.FieldResourceKey:
+		return m.OldResourceKey(ctx)
 	case task.FieldError:
 		return m.OldError(ctx)
 	}
@@ -9905,6 +10873,27 @@ func (m *TaskMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetProgress(v)
 		return nil
+	case task.FieldRetryCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRetryCount(v)
+		return nil
+	case task.FieldRetryAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRetryAt(v)
+		return nil
+	case task.FieldResourceKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetResourceKey(v)
+		return nil
 	case task.FieldError:
 		v, ok := value.(string)
 		if !ok {
@@ -9923,6 +10912,9 @@ func (m *TaskMutation) AddedFields() []string {
 	if m.addprogress != nil {
 		fields = append(fields, task.FieldProgress)
 	}
+	if m.addretry_count != nil {
+		fields = append(fields, task.FieldRetryCount)
+	}
 	return fields
 }
 
@@ -9933,6 +10925,8 @@ func (m *TaskMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
 	case task.FieldProgress:
 		return m.AddedProgress()
+	case task.FieldRetryCount:
+		return m.AddedRetryCount()
 	}
 	return nil, false
 }
@@ -9949,6 +10943,13 @@ func (m *TaskMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddProgress(v)
 		return nil
+	case task.FieldRetryCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRetryCount(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Task numeric field %s", name)
 }
@@ -9957,6 +10958,9 @@ func (m *TaskMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *TaskMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(task.FieldRetryAt) {
+		fields = append(fields, task.FieldRetryAt)
+	}
 	if m.FieldCleared(task.FieldError) {
 		fields = append(fields, task.FieldError)
 	}
@@ -9974,6 +10978,9 @@ func (m *TaskMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *TaskMutation) ClearField(name string) error {
 	switch name {
+	case task.FieldRetryAt:
+		m.ClearRetryAt()
+		return nil
 	case task.FieldError:
 		m.ClearError()
 		return nil
@@ -10002,6 +11009,15 @@ func (m *TaskMutation) ResetField(name string) error {
 		return nil
 	case task.FieldProgress:
 		m.ResetProgress()
+		return nil
+	case task.FieldRetryCount:
+		m.ResetRetryCount()
+		return nil
+	case task.FieldRetryAt:
+		m.ResetRetryAt()
+		return nil
+	case task.FieldResourceKey:
+		m.ResetResourceKey()
 		return nil
 	case task.FieldError:
 		m.ResetError()

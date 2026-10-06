@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import type { OfflineSubmission } from '@/api/offline'
 import { isTaskActive, type BatchTask, type ScanTask } from '@/api/tasks'
 import { isOfflineTaskActive } from '@/api/offline'
-import { scanStage } from './scan-status'
+import { scanStage, scanStatus } from './scan-status'
 import { TaskProgress } from './task-progress'
 import { TaskToastActions } from './task-toast-actions'
 import { batchToastID, offlineToastID, scanToastID } from './task-notification-diff'
@@ -37,6 +37,8 @@ export function notifyTaskError(id: string, title: string, description: string) 
 
 export function notifyScanTask(task: ScanTask, options: TaskToastOptions = {}) {
   const active = isTaskActive(task)
+  const action = task.rebuild ? '重建' : '同步'
+  const title = task.movie_id ? `${task.code} 重新刮削` : `媒体库${action}`
   const props = taskToastOptions(
     scanToastID(task.id),
     active,
@@ -45,22 +47,39 @@ export function notifyScanTask(task: ScanTask, options: TaskToastOptions = {}) {
   )
   if (active) {
     // Sonner's loading type hides the close button; long tasks remain dismissible.
-    toast.info(options.waiting ? '扫描进度等待同步' : '正在处理媒体库', {
-      ...props,
-      icon: options.waiting ? undefined : <LoaderCircleIcon className="size-4 animate-spin" />,
-      description: (
-        <TaskProgress
-          current={scanStage(task)}
-          progress={task.scan.stage === 'artwork' ? task.progress : undefined}
-        />
-      )
-    })
+    toast.info(
+      options.waiting
+        ? '正在连接任务服务'
+        : task.movie_id
+          ? `正在重新刮削 ${task.code}`
+          : `正在${action}媒体库`,
+      {
+        ...props,
+        icon:
+          options.waiting || task.paused ? undefined : (
+            <LoaderCircleIcon className="size-4 animate-spin" />
+          ),
+        description: (
+          <TaskProgress
+            current={scanStage(task)}
+            label={scanStatus(task)}
+            progress={task.scan.metadata_total > 0 ? task.progress : undefined}
+          />
+        )
+      }
+    )
   } else if (task.status === 'failed') {
-    toast.error('媒体库处理失败', { ...props, description: task.error })
-  } else {
-    toast.success('媒体库处理完成', {
+    toast.error(task.scan.metadata_failed && !task.movie_id ? `${title}结束` : `${title}失败`, {
       ...props,
-      description: `识别到 ${task.scan.movies} 部影片${task.scan.metadata_total > 0 ? ` · 元数据 ${task.scan.metadata_completed} 部` : ''}`
+      description:
+        task.scan.metadata_failed && !task.movie_id
+          ? `${task.scan.metadata_failed} 部影片失败`
+          : task.error
+    })
+  } else {
+    toast.success(`${title}完成`, {
+      ...props,
+      description: undefined
     })
   }
 }
@@ -81,12 +100,16 @@ export function notifyOfflineTask(
     const scan = options.scan
     toast.info(task.code, {
       ...props,
-      icon: options.waiting ? undefined : <LoaderCircleIcon className="size-4 animate-spin" />,
+      icon:
+        options.waiting || (task.phase !== 'downloading' && scan?.paused) ? undefined : (
+          <LoaderCircleIcon className="size-4 animate-spin" />
+        ),
       description: options.waiting ? (
         '等待进度同步'
       ) : (
         <TaskProgress
           offline
+          label={task.phase !== 'downloading' && scan ? scanStatus(scan) : undefined}
           current={
             task.phase === 'downloading'
               ? 'downloading'
@@ -99,7 +122,7 @@ export function notifyOfflineTask(
           progress={
             task.phase === 'downloading'
               ? task.progress
-              : scan?.scan.stage === 'artwork'
+              : scan && scan.scan.metadata_total > 0
                 ? scan.progress
                 : undefined
           }
@@ -119,7 +142,7 @@ export function notifyOfflineTask(
       ...props,
       description:
         task.phase === 'downloaded'
-          ? '视频已下载，但尚未识别为对应影片，请在 115 检查文件名和大小后重新扫描。'
+          ? '视频已下载，但尚未识别为对应影片，请在 115 检查文件名和大小后同步媒体库。'
           : '当前媒体目录内未找到该任务的视频文件。'
     })
   }

@@ -17,9 +17,9 @@ import (
 	"github.com/ppxb/miyabi/internal/gfriends"
 )
 
-// MediaFetcher downloads catalogue images such as JavDB actor avatars.
+// MediaFetcher downloads actor images through their metadata source.
 type MediaFetcher interface {
-	Media(context.Context, string) (domain.Media, error)
+	Image(context.Context, domain.ImageCandidate) (domain.Media, error)
 }
 
 type actorSync struct {
@@ -125,12 +125,12 @@ func (s *actorSync) close() {
 
 func (s *actorSync) syncAvatars(ctx context.Context, cfg Config) (int, error) {
 	g, media := s.gfriends, s.media
-	missing, err := s.client.personsWithoutAvatar(ctx, cfg)
+	people, err := s.client.persons(ctx, cfg)
 	if err != nil {
-		return 0, fmt.Errorf("list persons without avatar: %w", err)
+		return 0, fmt.Errorf("list persons for avatar sync: %w", err)
 	}
 
-	if len(missing) == 0 {
+	if len(people) == 0 {
 		return 0, nil
 	}
 
@@ -138,21 +138,33 @@ func (s *actorSync) syncAvatars(ctx context.Context, cfg Config) (int, error) {
 	if g != nil {
 		if err := g.EnsureIndex(ctx); err != nil {
 			// Skip GFriends for this run instead of re-downloading its index per actor.
-			slog.WarnContext(ctx, "gfriends index unavailable; using JavDB avatars only", "error", err)
+			slog.WarnContext(ctx, "gfriends index unavailable; using source avatars only", "error", err)
 			g = nil
 			canCacheMiss = false
 		}
 	}
 
-	slog.InfoContext(ctx, "emby actor avatar sync started", "missing_count", len(missing))
+	slog.InfoContext(ctx, "emby actor avatar sync started", "person_count", len(people))
 	uploaded := 0
 
-	for _, person := range missing {
+	for _, person := range people {
 		if err := ctx.Err(); err != nil {
 			return uploaded, err
 		}
 
 		if s.isAvatarNotFound(person.Name) {
+			continue
+		}
+		valid, err := s.client.hasValidAvatar(ctx, cfg, person)
+		if err != nil {
+			if ctx.Err() != nil {
+				return uploaded, ctx.Err()
+			}
+			// An unavailable image-details endpoint does not prove the image is broken.
+			slog.WarnContext(ctx, "failed to inspect actor avatar", "name", person.Name, "error", err)
+			continue
+		}
+		if valid {
 			continue
 		}
 
@@ -178,7 +190,7 @@ func (s *actorSync) syncAvatars(ctx context.Context, cfg Config) (int, error) {
 		}
 	}
 
-	slog.InfoContext(ctx, "emby actor avatar sync completed", "uploaded", uploaded, "total_missing", len(missing))
+	slog.InfoContext(ctx, "emby actor avatar sync completed", "uploaded", uploaded, "total_persons", len(people))
 	return uploaded, nil
 }
 
@@ -225,7 +237,7 @@ func (s *actorSync) clearCache() {
 	clear(s.avatarNotFound)
 }
 
-// findAvatar prefers GFriends and falls back to the JavDB avatar of a scraped actor.
+// findAvatar prefers GFriends and falls back to the source avatar of a scraped actor.
 func (s *actorSync) findAvatar(ctx context.Context, g *gfriends.Client, media MediaFetcher, name string) (domain.Media, bool, error) {
 	if s.isAvatarNotFound(name) {
 		return domain.Media{}, false, nil
@@ -253,7 +265,7 @@ func (s *actorSync) findAvatar(ctx context.Context, g *gfriends.Client, media Me
 	if *act.Avatar == "" {
 		return domain.Media{}, false, upstreamErr
 	}
-	image, err := media.Media(ctx, *act.Avatar)
+	image, err := media.Image(ctx, domain.ImageCandidate{Provider: act.Provider, URL: *act.Avatar, Role: "avatar"})
 	if err != nil {
 		return domain.Media{}, false, errors.Join(upstreamErr, err)
 	}

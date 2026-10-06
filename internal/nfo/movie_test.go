@@ -1,10 +1,45 @@
 package nfo
 
 import (
+	"encoding/xml"
 	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestActorAvatarSourceRoundTripsWithoutAnEmbyDownloadURL(t *testing.T) {
+	for _, input := range []string{
+		`<movie><num>ABP-001</num><actor provider="javdb"><sourceid>actor-1</sourceid><name>Actor</name><thumb>https://cdn.example/encoded.jpg</thumb></actor></movie>`,
+		`<movie><num>ABP-001</num><actor provider="javdb"><sourceid>actor-1</sourceid><name>Actor</name><miyabi_avatar>https://cdn.example/encoded.jpg</miyabi_avatar></actor></movie>`,
+	} {
+		doc, err := Decode([]byte(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(doc.Actors) != 1 || doc.Actors[0].Thumb != "https://cdn.example/encoded.jpg" {
+			t.Fatalf("avatar source lost: %+v", doc.Actors)
+		}
+		body, err := Encode(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var exported struct {
+			Actors []struct {
+				Thumb string `xml:"thumb"`
+			} `xml:"actor"`
+		}
+		if err := xml.Unmarshal(body, &exported); err != nil {
+			t.Fatal(err)
+		}
+		if exported.Actors[0].Thumb != "" || !strings.Contains(string(body), "<miyabi_avatar>") {
+			t.Fatalf("export exposes encoded image to Emby: %s", body)
+		}
+		restored, err := Decode(body)
+		if err != nil || restored.Actors[0].Thumb != doc.Actors[0].Thumb || restored.Actors[0].ID != "actor-1" {
+			t.Fatalf("rescan lost avatar metadata: %+v, %v", restored.Actors, err)
+		}
+	}
+}
 
 func TestUnfamiliarNumbersRoundTripWithSafeFilenames(t *testing.T) {
 	seen := make(map[string]bool)
@@ -32,17 +67,17 @@ func TestUnfamiliarNumbersRoundTripWithSafeFilenames(t *testing.T) {
 	}
 }
 
-func TestRoundTripPreservesSourceIDsAndOmitsPlot(t *testing.T) {
+func TestRoundTripPreservesSourceIDs(t *testing.T) {
 	input := []byte(`<movie>
   <title>Fixture &amp; title</title><num>ABP-001</num>
   <uniqueid type="javdb" default="true">fixture-movie</uniqueid>
   <premiered>2024-01-02</premiered><runtime>120</runtime><rating>4.5</rating>
-  <director javdbid="director-1">Director</director>
-  <studio javdbid="maker-1">Maker</studio><set javdbid="series-1"><name>Series</name></set>
-  <actor><name>Actor</name><javdbid>actor-1</javdbid><name_zht>演員</name_zht><gender>female</gender></actor>
-  <tag javdbid="tag-1" category="category-1" name_zht="標籤">Tag</tag>
+  <director provider="javdb" sourceid="director-1">Director</director>
+  <studio provider="javdb" sourceid="maker-1">Maker</studio><set provider="javdb" sourceid="series-1"><name>Series</name></set>
+  <actor provider="javdb"><name>Actor</name><sourceid>actor-1</sourceid><name_zht>演員</name_zht><gender>female</gender></actor>
+  <tag provider="javdb" sourceid="tag-1" category="category-1" name_zht="標籤">Tag</tag>
   <thumb aspect="poster">ABP-001-poster.jpg</thumb><fanart><thumb>ABP-001-fanart.jpg</thumb></fanart>
-  <plot>Must not be retained</plot>
+  <plot>Source synopsis</plot>
 </movie>`)
 	doc, err := Decode(input)
 	if err != nil {
@@ -52,8 +87,8 @@ func TestRoundTripPreservesSourceIDsAndOmitsPlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(body), "plot") || strings.Contains(string(body), "Must not be retained") {
-		t.Fatal("NFO retained plot content")
+	if strings.Contains(string(body), "<plot>") {
+		t.Fatal("NFO retained an unused plot")
 	}
 	got, err := Decode(body)
 	if err != nil {

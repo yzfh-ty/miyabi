@@ -3,22 +3,24 @@ package scrape
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
-	"github.com/ppxb/miyabi/internal/ent"
+	"github.com/ppxb/miyabi/internal/drive"
 	"github.com/ppxb/miyabi/internal/pan"
 )
 
 type mockSession struct {
-	source    domain.LibrarySource
-	listCalls atomic.Int32
-	infoCalls atomic.Int32
-	listFunc  func(ctx context.Context, dirID string, offset int) (pan.FilePage, error)
-	infoFunc  func(ctx context.Context, fileID string) (pan.FileInfo, error)
+	drive.Session // These cache tests exercise only Source, List and Info.
+	source        domain.LibrarySource
+	listCalls     atomic.Int32
+	infoCalls     atomic.Int32
+	listFunc      func(ctx context.Context, dirID string, offset int) (pan.FilePage, error)
+	infoFunc      func(ctx context.Context, fileID string) (pan.FileInfo, error)
 }
 
 func (m *mockSession) Source() domain.LibrarySource { return m.source }
@@ -36,31 +38,6 @@ func (m *mockSession) Info(ctx context.Context, fileID string) (pan.FileInfo, er
 	}
 	return pan.FileInfo{File: pan.File{ID: fileID}}, nil
 }
-func (m *mockSession) Read(ctx context.Context, pickCode string, limit int64) ([]byte, error) {
-	return nil, nil
-}
-func (m *mockSession) Commit(ctx context.Context, fn func(tx *ent.Tx) error) error {
-	return nil
-}
-func (m *mockSession) CommitAccount(ctx context.Context, fn func(tx *ent.Tx) error) error {
-	return nil
-}
-func (m *mockSession) PlayURL(ctx context.Context, pickCode, userAgent string) ([]pan.PlaySource, error) {
-	return nil, nil
-}
-func (m *mockSession) DownloadURL(ctx context.Context, pickCode, userAgent string) (string, error) {
-	return "", nil
-}
-func (m *mockSession) AddOffline(ctx context.Context, magnet string) (string, error) {
-	return "", nil
-}
-func (m *mockSession) RemoveOffline(ctx context.Context, hash string) error {
-	return nil
-}
-func (m *mockSession) OfflineTasks(ctx context.Context, page int) (pan.OfflinePage, error) {
-	return pan.OfflinePage{}, nil
-}
-
 func TestDirectoryEntries_CacheAndExpiration(t *testing.T) {
 	service := &Service{
 		dirCache: make(map[string]dirCacheEntry),
@@ -97,6 +74,7 @@ func TestDirectoryEntries_CacheAndExpiration(t *testing.T) {
 	if sess.listCalls.Load() != 1 {
 		t.Fatalf("expected 1 list call, got %d", sess.listCalls.Load())
 	}
+	files1[0].Name = "changed after cache miss"
 
 	// Second read within TTL: should hit cache
 	files2, err := service.directoryEntries(ctx, sess, "dir-100")
@@ -105,6 +83,13 @@ func TestDirectoryEntries_CacheAndExpiration(t *testing.T) {
 	}
 	if len(files2) != 2 {
 		t.Fatalf("expected 2 files, got %d", len(files2))
+	}
+	if files2[0].Name != "TEST-001.mp4" {
+		t.Fatal("caller modified the cached listing after a miss")
+	}
+	files2[0].Name = "changed after cache hit"
+	if files, err := service.directoryEntries(ctx, sess, "dir-100"); err != nil || files[0].Name != "TEST-001.mp4" {
+		t.Fatalf("caller modified the cached listing after a hit: %v, %v", files, err)
 	}
 	if sess.listCalls.Load() != 1 {
 		t.Fatalf("expected still 1 list call (cache hit), got %d", sess.listCalls.Load())
@@ -125,6 +110,147 @@ func TestDirectoryEntries_CacheAndExpiration(t *testing.T) {
 	}
 	if sess.listCalls.Load() != 2 {
 		t.Fatalf("expected 2 list calls after expiration, got %d", sess.listCalls.Load())
+	}
+}
+
+func TestDirectoryEntries_ReclaimsExpiredListings(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		dirID string
+		err   error
+	}{
+		{name: "cache hit", dirID: "live"},
+		{name: "cache miss", dirID: "new"},
+		{name: "failed request", dirID: "new", err: context.DeadlineExceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := &Service{dirCache: map[string]dirCacheEntry{
+				"acc:expired": {files: []pan.File{{ID: "old"}}, expiresAt: time.Now().Add(-time.Second)},
+				"acc:live":    {files: []pan.File{{ID: "current"}}, expiresAt: time.Now().Add(defaultDirCacheTTL)},
+			}}
+			sess := &mockSession{
+				source: domain.LibrarySource{AccountID: "acc", Directory: domain.LibraryDirectory{ID: "root"}},
+				listFunc: func(context.Context, string, int) (pan.FilePage, error) {
+					return pan.FilePage{Total: 1, Files: []pan.File{{ID: "new"}}, Path: []pan.Directory{{ID: "root"}}}, test.err
+				},
+			}
+			_, err := service.directoryEntries(t.Context(), sess, test.dirID)
+			if !errors.Is(err, test.err) {
+				t.Fatalf("expected error %v, got %v", test.err, err)
+			}
+			if _, ok := service.dirCache["acc:expired"]; ok {
+				t.Fatal("expired listing retained after accessing another directory")
+			}
+			if _, ok := service.dirCache["acc:live"]; !ok {
+				t.Fatal("unexpired listing was removed")
+			}
+			if test.err != nil {
+				if _, ok := service.dirCache["acc:new"]; ok {
+					t.Fatal("failed request was cached")
+				}
+			}
+		})
+	}
+}
+
+func TestDirectoryEntries_Capacity(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		directories int
+		filesPerDir int
+		retained    int
+	}{
+		{name: "empty directories", directories: maxDirCacheEntries + 1, retained: maxDirCacheEntries},
+		{name: "total files", directories: 3, filesPerDir: maxDirCacheFiles / 2, retained: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := &Service{dirCache: make(map[string]dirCacheEntry)}
+			sess := &mockSession{
+				source: domain.LibrarySource{AccountID: "acc", Directory: domain.LibraryDirectory{ID: "root"}},
+				listFunc: func(context.Context, string, int) (pan.FilePage, error) {
+					return pan.FilePage{Total: test.filesPerDir, Files: make([]pan.File, test.filesPerDir), Path: []pan.Directory{{ID: "root"}}}, nil
+				},
+			}
+			// Distinct future deadlines make the eviction order deterministic without sleeping.
+			expiry := time.Now().Add(defaultDirCacheTTL / 2)
+			for i := range test.directories {
+				dirID := fmt.Sprintf("dir-%d", i)
+				files, err := service.directoryEntries(t.Context(), sess, dirID)
+				if err != nil || len(files) != test.filesPerDir {
+					t.Fatalf("directory %s: got %d files, error %v", dirID, len(files), err)
+				}
+				entry, ok := service.dirCache["acc:"+dirID]
+				if !ok {
+					t.Fatalf("new listing %s was not cached", dirID)
+				}
+				entry.expiresAt = expiry.Add(time.Duration(i) * time.Millisecond)
+				service.dirCache["acc:"+dirID] = entry
+				fileCount := 0
+				for _, cached := range service.dirCache {
+					fileCount += len(cached.files)
+				}
+				if len(service.dirCache) > maxDirCacheEntries || fileCount > maxDirCacheFiles {
+					t.Fatalf("cache exceeds budget: %d directories, %d files", len(service.dirCache), fileCount)
+				}
+			}
+			if len(service.dirCache) != test.retained {
+				t.Fatalf("expected %d retained listings, got %d", test.retained, len(service.dirCache))
+			}
+			if _, ok := service.dirCache["acc:dir-0"]; ok {
+				t.Fatal("oldest listing was not evicted")
+			}
+			if _, err := service.directoryEntries(t.Context(), sess, "dir-0"); err != nil {
+				t.Fatalf("reload evicted directory: %v", err)
+			}
+			if got := sess.listCalls.Load(); got != int32(test.directories+1) {
+				t.Fatalf("expected evicted directory to be fetched again, got %d requests", got)
+			}
+		})
+	}
+}
+
+func TestDirectoryEntries_OversizedDirectory(t *testing.T) {
+	service := &Service{dirCache: map[string]dirCacheEntry{
+		"acc:small": {files: []pan.File{{ID: "small"}}, expiresAt: time.Now().Add(defaultDirCacheTTL)},
+	}}
+	sess := &mockSession{
+		source: domain.LibrarySource{AccountID: "acc", Directory: domain.LibraryDirectory{ID: "root"}},
+		listFunc: func(context.Context, string, int) (pan.FilePage, error) {
+			return pan.FilePage{Total: maxDirCacheFiles + 1, Files: make([]pan.File, maxDirCacheFiles+1), Path: []pan.Directory{{ID: "root"}}}, nil
+		},
+	}
+	for range 2 {
+		files, err := service.directoryEntries(t.Context(), sess, "large")
+		if err != nil || len(files) != maxDirCacheFiles+1 {
+			t.Fatalf("large directory was truncated: %d files, error %v", len(files), err)
+		}
+	}
+	if sess.listCalls.Load() != 2 || len(service.dirCache) != 1 {
+		t.Fatal("oversized listing should not be cached or displace other listings")
+	}
+	if _, ok := service.dirCache["acc:small"]; !ok {
+		t.Fatal("oversized listing displaced the existing listing")
+	}
+}
+
+func TestDirectoryEntries_AccountIsolation(t *testing.T) {
+	service := &Service{dirCache: make(map[string]dirCacheEntry)}
+	for _, account := range []string{"acc-1", "acc-2"} {
+		sess := &mockSession{
+			source: domain.LibrarySource{AccountID: account, Directory: domain.LibraryDirectory{ID: "root"}},
+			listFunc: func(context.Context, string, int) (pan.FilePage, error) {
+				return pan.FilePage{Total: 1, Files: []pan.File{{ID: account}}, Path: []pan.Directory{{ID: "root"}}}, nil
+			},
+		}
+		for range 2 {
+			files, err := service.directoryEntries(t.Context(), sess, "shared-dir-id")
+			if err != nil || len(files) != 1 || files[0].ID != account {
+				t.Fatalf("account %s got another account's listing: %v, %v", account, files, err)
+			}
+		}
+		if sess.listCalls.Load() != 1 {
+			t.Fatalf("account %s did not reuse its listing", account)
+		}
 	}
 }
 
@@ -183,11 +309,15 @@ func TestVerifyVideoPositions(t *testing.T) {
 	sessDeleted := &mockSession{
 		source: source,
 		infoFunc: func(ctx context.Context, fileID string) (pan.FileInfo, error) {
-			return pan.FileInfo{}, errors.New("file not found on 115")
+			return pan.FileInfo{}, pan.ErrNotFound
 		},
 	}
 	errDeleted := service.verifyVideoPositions(t.Context(), sessDeleted, dir)
 	if !domain.IsKind(errDeleted, domain.KindNotFound) {
 		t.Fatalf("expected KindNotFound for deleted video, got %v", errDeleted)
+	}
+	sessDeleted.infoFunc = func(context.Context, string) (pan.FileInfo, error) { return pan.FileInfo{}, context.DeadlineExceeded }
+	if _, retry := domain.RetryDelay(service.verifyVideoPositions(t.Context(), sessDeleted, dir)); !retry {
+		t.Fatal("network timeout was classified as a deleted video")
 	}
 }

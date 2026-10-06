@@ -11,7 +11,6 @@ import (
 	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/ent"
-	"github.com/ppxb/miyabi/internal/javbus"
 	"github.com/ppxb/miyabi/internal/javdb"
 	"github.com/ppxb/miyabi/internal/magnet"
 	"github.com/ppxb/miyabi/internal/netx"
@@ -25,7 +24,6 @@ const (
 type persistedRoute struct {
 	Host      string `json:"host"`
 	LatencyMS int64  `json:"latency_ms"`
-	Manual    bool   `json:"manual"`
 }
 
 // Service combines JavDB catalogue data with Miyabi's local library and workflow state.
@@ -48,11 +46,13 @@ type Service struct {
 }
 
 // New creates the lazy JavDB client and restores/persists device UUID and route settings.
+// On success, Close also releases the supplied magnet source.
 func New(
 	ctx context.Context,
 	db *ent.Client,
 	proxy *netx.ProxyManager,
 	local LocalState,
+	supplement JavBusSource,
 ) (*Service, error) {
 	deviceUUID, found, err := database.LoadSetting[string](ctx, db, javdbDeviceSetting)
 	if err != nil {
@@ -77,19 +77,12 @@ func New(
 		Proxy:         proxy,
 		CachedHost:    route.Host,
 		CachedLatency: time.Duration(route.LatencyMS) * time.Millisecond,
-		ManualRoute:   route.Manual,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	javbusClient, err := javbus.New(javbus.Options{Proxy: proxy})
-	if err != nil {
-		client.Close()
-		return nil, fmt.Errorf("initialize JavBus client: %w", err)
-	}
-
-	service := newService(db, client, javbusClient, local, route)
+	service := newService(db, client, supplement, local, route)
 	service.proxy = proxy
 	return service, nil
 }
@@ -188,6 +181,11 @@ func (service *Service) CatalogueDetail(ctx context.Context, movieID string) (do
 	})
 }
 
+func (service *Service) RefreshCatalogueDetail(ctx context.Context, movieID string) (domain.MovieDetail, error) {
+	service.details.invalidate(movieID)
+	return service.CatalogueDetail(ctx, movieID)
+}
+
 func (service *Service) MovieDetail(ctx context.Context, movieID string) (MovieDetail, error) {
 	movie, err := service.CatalogueDetail(ctx, movieID)
 	if err != nil {
@@ -266,48 +264,6 @@ func (service *Service) ResolveMovieID(ctx context.Context, code string) (string
 	return id, nil
 }
 
-func (service *Service) Route() RouteStatus {
-	status, active := service.javdb.Route()
-	result := RouteStatus{
-		Host:       status.Host,
-		LatencyMS:  status.Latency.Milliseconds(),
-		Active:     active,
-		Manual:     status.Manual,
-		Candidates: make([]RouteCandidate, len(status.Candidates)),
-	}
-	for index, candidate := range status.Candidates {
-		result.Candidates[index] = RouteCandidate{
-			Host:      candidate.Host,
-			LatencyMS: candidate.Latency.Milliseconds(),
-			Status:    candidate.Status,
-		}
-	}
-	return result
-}
-
-func (service *Service) SelectRoute(ctx context.Context, host string) (RouteStatus, error) {
-	if host == "" {
-		return service.Reselect(ctx)
-	}
-	if _, err := service.javdb.SelectRoute(ctx, host); err != nil {
-		return RouteStatus{}, fmt.Errorf("select JavDB route: %w", err)
-	}
-	if err := service.persistActiveRoute(ctx); err != nil {
-		return RouteStatus{}, err
-	}
-	return service.Route(), nil
-}
-
-func (service *Service) Reselect(ctx context.Context) (RouteStatus, error) {
-	if _, err := service.javdb.Reselect(ctx); err != nil {
-		return RouteStatus{}, fmt.Errorf("reselect JavDB route: %w", err)
-	}
-	if err := service.persistActiveRoute(ctx); err != nil {
-		return RouteStatus{}, err
-	}
-	return service.Route(), nil
-}
-
 func projectMovies(
 	ctx context.Context,
 	source []domain.Movie,
@@ -349,7 +305,7 @@ func (service *Service) persistActiveRoute(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	route := persistedRoute{Host: active.Host, LatencyMS: active.Latency.Milliseconds(), Manual: active.Manual}
+	route := persistedRoute{Host: active.Host, LatencyMS: active.Latency.Milliseconds()}
 	if route == service.lastSavedRoute {
 		return nil
 	}

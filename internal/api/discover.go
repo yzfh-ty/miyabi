@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ppxb/miyabi/internal/catalogue"
+	"github.com/ppxb/miyabi/internal/codeid"
 	"github.com/ppxb/miyabi/internal/domain"
 )
 
@@ -13,13 +14,11 @@ type CatalogueManager interface {
 	Search(context.Context, string, domain.SearchOptions) ([]catalogue.Movie, error)
 	Browse(context.Context, domain.BrowseOptions) ([]catalogue.Movie, error)
 	MovieDetail(context.Context, string) (catalogue.MovieDetail, error)
+	ResolveMovieID(context.Context, string) (string, error)
 	MovieStates(context.Context, []catalogue.MovieIdentity) ([]catalogue.MovieStateItem, error)
 	Magnets(context.Context, string) ([]catalogue.Magnet, error)
 	Tags(context.Context, domain.Zone) ([]domain.TagCategory, error)
 	Media(context.Context, string) (domain.Media, error)
-	Route() catalogue.RouteStatus
-	Reselect(context.Context) (catalogue.RouteStatus, error)
-	SelectRoute(context.Context, string) (catalogue.RouteStatus, error)
 }
 
 type ViewedManager interface {
@@ -74,10 +73,6 @@ type imageQuery struct {
 	URL string `form:"url" binding:"required,url"`
 }
 
-type javdbRouteInput struct {
-	Host string `json:"host" binding:"omitempty,url"`
-}
-
 func discoverSearchHandler(discover CatalogueManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		query, ok := bindQuery[discoverSearchQuery](c)
@@ -126,6 +121,26 @@ func discoverMovieHandler(discover CatalogueManager) gin.HandlerFunc {
 	}
 }
 
+func discoverResolveMovieHandler(discover CatalogueManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		query, ok := bindQuery[struct {
+			Code string `form:"code" binding:"required,max=200"`
+		}](c)
+		if !ok {
+			return
+		}
+		code := codeid.Normalize(query.Code)
+		if code == "" {
+			respond(c, nil, domain.E(domain.KindInvalid, "影片番号不能为空", nil))
+			return
+		}
+		id, err := discover.ResolveMovieID(c.Request.Context(), code)
+		respond(c, struct {
+			ID string `json:"id"`
+		}{ID: id}, err)
+	}
+}
+
 func discoverTagsHandler(discover CatalogueManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		query, ok := bindQuery[discoverTagsQuery](c)
@@ -161,30 +176,6 @@ func imageHandler(discover CatalogueManager) gin.HandlerFunc {
 		}
 		c.Header("Cache-Control", "public, max-age=86400")
 		c.Data(http.StatusOK, media.ContentType, media.Body)
-	}
-}
-
-func javdbRouteHandler(discover CatalogueManager) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		respond(c, discover.Route(), nil)
-	}
-}
-
-func javdbReselectHandler(discover CatalogueManager) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		status, err := discover.Reselect(c.Request.Context())
-		respond(c, status, err)
-	}
-}
-
-func javdbSelectRouteHandler(discover CatalogueManager) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		input, ok := bindJSON[javdbRouteInput](c)
-		if !ok {
-			return
-		}
-		status, err := discover.SelectRoute(c.Request.Context(), input.Host)
-		respond(c, status, err)
 	}
 }
 

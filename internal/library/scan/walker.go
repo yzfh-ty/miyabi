@@ -141,10 +141,28 @@ func (r *scanRun) savePage(ctx context.Context, directoryPath string, videos []V
 }
 
 func (r *scanRun) reconcile(ctx context.Context) error {
+	// Cover jobs acquire artwork protection before export configuration and
+	// source protection; keep the same order while restoring cached exports.
+	if r.scanner.images != nil {
+		if err := r.scanner.images.LockArtwork(ctx); err != nil {
+			return err
+		}
+		defer r.scanner.images.UnlockArtwork()
+	}
 	return r.scanner.exportMgr.WithConfig(func(expCfg export.Config) error {
-		return r.session.Commit(ctx, func(tx *ent.Tx) error {
-			return r.reconcileTx(ctx, tx, expCfg)
-		})
+		finish := func() error {
+			reusable, err := r.prepareReconcile(ctx, expCfg)
+			if err != nil {
+				return err
+			}
+			return ent.WithTx(ctx, r.scanner.db, func(tx *ent.Tx) error {
+				return r.reconcileTx(ctx, tx, expCfg, reusable)
+			})
+		}
+		if r.session != nil {
+			return r.session.WithSource(ctx, finish)
+		}
+		return finish()
 	})
 }
 
@@ -171,6 +189,9 @@ func (r *scanRun) runTarget(ctx context.Context, isResume bool) error {
 		videos := []Video{IdentifyVideo(info.File)}
 		if r.payload.OfflineTaskID != 0 {
 			videos[0].Code = r.payload.Code
+		}
+		if err := applyManualCodes(ctx, r.scanner.db, r.payload.Source.AccountID, videos); err != nil {
+			return err
 		}
 		if err := resolveTargetNFO(ctx, r.session, videos); err != nil {
 			return err
@@ -223,6 +244,9 @@ func (r *scanRun) walk(ctx context.Context, start Directory, isResume bool) erro
 		if err := ReportScan(ctx, r.scanner.db.Task, r.taskID, *r.payload, r.scanner.tasksSvc); err != nil {
 			return err
 		}
+		if err := tasks.Checkpoint(ctx, r.scanner.db); err != nil {
+			return err
+		}
 		progress := r.payload.Scan
 		r.checkpointProgress = &progress
 		if err := r.indexDirectory(ctx, directory); err != nil {
@@ -235,6 +259,9 @@ func (r *scanRun) walk(ctx context.Context, start Directory, isResume bool) erro
 	r.payload.Scan.Stage = "reconciling"
 	r.payload.Scan.CurrentPath = r.payload.Source.Directory.Path
 	if err := ReportScan(ctx, r.scanner.db.Task, r.taskID, *r.payload, r.scanner.tasksSvc); err != nil {
+		return err
+	}
+	if err := tasks.Checkpoint(ctx, r.scanner.db); err != nil {
 		return err
 	}
 	return r.reconcile(ctx)
@@ -296,6 +323,11 @@ func (r *scanRun) indexDirectory(ctx context.Context, directory Directory) error
 	}
 
 	// Apply single-NFO tolerance matching to establish standard catalogue identity.
+	if len(sidecars) > 0 {
+		if err := applyManualCodes(ctx, r.scanner.db, r.payload.Source.AccountID, directoryVideos); err != nil {
+			return err
+		}
+	}
 	if err := ResolveNFOCodes(ctx, r.session, sidecars, directoryVideos); err != nil {
 		return err
 	}

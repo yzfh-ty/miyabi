@@ -15,14 +15,18 @@ import (
 	"github.com/ppxb/miyabi/internal/catalogue"
 	"github.com/ppxb/miyabi/internal/config"
 	"github.com/ppxb/miyabi/internal/database"
+	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/drive"
 	"github.com/ppxb/miyabi/internal/emby"
 	"github.com/ppxb/miyabi/internal/export"
 	"github.com/ppxb/miyabi/internal/gfriends"
 	mediaimage "github.com/ppxb/miyabi/internal/image"
+	"github.com/ppxb/miyabi/internal/javbus"
 	"github.com/ppxb/miyabi/internal/library"
 	"github.com/ppxb/miyabi/internal/library/scrape"
 	"github.com/ppxb/miyabi/internal/maintenance"
+	"github.com/ppxb/miyabi/internal/metadata"
+	"github.com/ppxb/miyabi/internal/metadata/providers"
 	"github.com/ppxb/miyabi/internal/monitor"
 	"github.com/ppxb/miyabi/internal/network"
 	"github.com/ppxb/miyabi/internal/netx"
@@ -53,6 +57,7 @@ type App struct {
 	driveSvc  *drive.Drive
 	catalogue *catalogue.Service
 	scrape    *scrape.Service
+	metadata  *metadata.Service
 	embySvc   *emby.Service
 	sidecars  *sidecarsync.Service
 }
@@ -91,11 +96,33 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		EmbyDir: cfg.EmbyDir, PublicURL: cfg.PublicURL, STRMToken: cfg.STRMToken,
 	})
 	libSvc := library.New(store.Client, driveSvc, taskSvc, images, library.Options{ExportManager: exportMgr})
-	catalogueSvc, err := catalogue.New(ctx, store.Client, networkSvc.ProxyManager(), libSvc)
+	javbusClient, err := javbus.New(javbus.Options{Proxy: networkSvc.ProxyManager()})
 	if err != nil {
 		driveSvc.Close()
 		_ = store.Close()
+		return nil, err
+	}
+	catalogueSvc, err := catalogue.New(ctx, store.Client, networkSvc.ProxyManager(), libSvc, javbusClient)
+	if err != nil {
+		javbusClient.Close()
+		driveSvc.Close()
+		_ = store.Close()
 		return nil, fmt.Errorf("initialize catalogue service: %w", err)
+	}
+	fc2Source := providers.NewFC2(networkSvc.ProxyManager())
+	fanzaSource := providers.NewFANZA(networkSvc.ProxyManager())
+	heyzoSource := providers.NewHEYZO(networkSvc.ProxyManager())
+	pacopacomamaSource := providers.NewPacopacomama(networkSvc.ProxyManager())
+	metadataSvc, err := metadata.New(ctx, store.Client, fanzaSource, fc2Source, heyzoSource, pacopacomamaSource, providers.NewJavDB(catalogueSvc))
+	if err != nil {
+		fanzaSource.Close()
+		fc2Source.Close()
+		heyzoSource.Close()
+		pacopacomamaSource.Close()
+		catalogueSvc.Close()
+		driveSvc.Close()
+		_ = store.Close()
+		return nil, err
 	}
 
 	offlineSvc := offline.New(store.Client, catalogueSvc, driveSvc, taskSvc, libSvc, offlineSubmitTimeout)
@@ -116,11 +143,12 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		PublicURL:  cfg.PublicURL,
 	}, emby.Dependencies{
 		GFriends:          gfriendsClient,
-		Media:             catalogueSvc,
+		Media:             metadataSvc,
 		ExportManager:     exportMgr,
 		ScheduleLocalScan: libSvc.ScheduleLocalScan,
 	})
 	if err != nil {
+		metadataSvc.Close()
 		catalogueSvc.Close()
 		driveSvc.Close()
 		_ = store.Close()
@@ -129,13 +157,14 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 	// This is the only cycle: library -> Emby -> catalogue -> library.
 	// Bind it before starting task pools or accepting requests.
 	libSvc.SetMediaNotifier(embySvc)
-	scrapeSvc := scrape.New(store.Client, driveSvc, catalogueSvc, images, taskSvc, scrape.Dependencies{
+	scrapeSvc := scrape.New(store.Client, driveSvc, metadataSvc, images, taskSvc, scrape.Dependencies{
 		ExportManager: exportMgr, MediaNotifier: embySvc, Subtitles: subtitleSvc,
 	})
 	maintenanceSvc, err := maintenance.New(cfg.DataDir, store.Client, images, scrapeSvc)
 	if err != nil {
 		scrapeSvc.Close()
 		embySvc.Close()
+		metadataSvc.Close()
 		catalogueSvc.Close()
 		driveSvc.Close()
 		_ = store.Close()
@@ -151,9 +180,8 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		embySvc.StartStartupSTRMRewrite()
 	}
 
-	taskRegistry.Register(tasks.NewHandler(tasks.KindScan, libSvc.Scan, libSvc.Finished))
-	taskRegistry.Register(tasks.NewHandler(tasks.KindScrape, scrapeSvc.Scrape, scrapeSvc.Finished))
-	taskRegistry.Register(tasks.NewHandler(tasks.KindCover, scrapeSvc.Cover, scrapeSvc.Finished))
+	taskRegistry.Register(tasks.NewHandler(tasks.KindScan, libSvc.Scan, libSvc.Finished).WithRetry(domain.RetryDelay))
+	taskRegistry.Register(tasks.NewHandler(tasks.KindScrape, scrapeSvc.Scrape, scrapeSvc.Finished).WithRetry(domain.RetryDelay))
 	taskRegistry.Register(tasks.NewHandler(tasks.KindSubscriptionBatch, monitorSvc.BatchHandler, monitorSvc.BatchFinished))
 
 	pools := newTaskPools(taskSvc, logger)
@@ -163,6 +191,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		Health:         store,
 		Access:         api.NewAccessGateService(cfg.AccessPassword, cfg.JWTSecret),
 		Catalogue:      catalogueSvc,
+		Metadata:       metadataSvc,
 		Drive:          driveSvc,
 		SidecarSync:    sidecarSyncSvc,
 		Offline:        offlineSvc,
@@ -197,6 +226,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		driveSvc:  driveSvc,
 		catalogue: catalogueSvc,
 		scrape:    scrapeSvc,
+		metadata:  metadataSvc,
 		embySvc:   embySvc,
 		sidecars:  sidecarSyncSvc,
 	}, nil
@@ -269,6 +299,9 @@ func (a *App) Close() error {
 	}
 	if a.scrape != nil {
 		a.scrape.Close()
+	}
+	if a.metadata != nil {
+		a.metadata.Close()
 	}
 	if a.catalogue != nil {
 		a.catalogue.Close()

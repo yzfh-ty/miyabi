@@ -65,15 +65,6 @@ export function apiPut<T>(path: string, body: unknown): Promise<T> {
   })
 }
 
-// Remove credentials saved by older versions without requiring storage access to sign in.
-export function clearLegacyAuthToken(): void {
-  try {
-    localStorage.removeItem('miyabi_jwt_token')
-  } catch {
-    // Storage can be unavailable or blocked; authentication now uses cookies.
-  }
-}
-
 export function notifyUnauthorized(): void {
   window.dispatchEvent(new CustomEvent('miyabi:unauthorized'))
 }
@@ -81,6 +72,7 @@ export function notifyUnauthorized(): void {
 // JavDB CDN hosts are not reachable from every browser network, so images go through the backend.
 export function imageURL(source: string) {
   if (source.startsWith('/api/library/artwork/')) return source
+  if (/^\/api\/library\/movies\/\d+\/previews\/\d+(?:\?v=\d+)?$/.test(source)) return source
   // Invalidate the encoded image responses cached before the backend decoded them.
   return `/api/image?v=3&url=${encodeURIComponent(source)}`
 }

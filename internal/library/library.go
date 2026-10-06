@@ -15,6 +15,7 @@ import (
 	"github.com/ppxb/miyabi/internal/ent/movie"
 	"github.com/ppxb/miyabi/internal/ent/predicate"
 	"github.com/ppxb/miyabi/internal/ent/tag"
+	"github.com/ppxb/miyabi/internal/ent/task"
 	"github.com/ppxb/miyabi/internal/export"
 	mediaimage "github.com/ppxb/miyabi/internal/image"
 	"github.com/ppxb/miyabi/internal/library/scan"
@@ -23,14 +24,16 @@ import (
 )
 
 type Entity struct {
-	ID   string `json:"id,omitempty"`
-	Name string `json:"name"`
+	Provider string `json:"provider,omitempty"`
+	ID       string `json:"id,omitempty"`
+	Name     string `json:"name"`
 }
 
 type Tag struct {
-	ID      int    `json:"id"`
-	JavDBID string `json:"javdb_id"`
-	Name    string `json:"name"`
+	ID       int    `json:"id"`
+	Provider string `json:"provider"`
+	SourceID string `json:"source_id"`
+	Name     string `json:"name"`
 }
 
 type Movie struct {
@@ -114,6 +117,15 @@ func (s *Service) StartScan(ctx context.Context) (domain.TaskInfo, error) {
 		return domain.TaskInfo{}, err
 	}
 	return s.EnqueueScan(ctx, sess.Source())
+}
+
+// StartRebuild scans the current source and refreshes every matched movie.
+func (s *Service) StartRebuild(ctx context.Context) (domain.TaskInfo, error) {
+	sess, err := s.drive.Open(ctx)
+	if err != nil {
+		return domain.TaskInfo{}, err
+	}
+	return s.enqueueScan(ctx, sess.Source(), true, task.StatusQueued, task.StatusRunning)
 }
 
 // Source returns the currently mounted library source, or nil if unmounted.
@@ -216,6 +228,15 @@ func (s *Service) EnqueueTargetedScan(ctx context.Context, tx *ent.Tx, source do
 	if err != nil {
 		return 0, err
 	}
+	tx.OnCommit(func(next ent.Committer) ent.Committer {
+		return ent.CommitFunc(func(ctx context.Context, tx *ent.Tx) error {
+			if err := next.Commit(ctx, tx); err != nil {
+				return err
+			}
+			s.tasks.WakePool()
+			return nil
+		})
+	})
 	return taskRecord.ID, nil
 }
 
@@ -249,10 +270,10 @@ func (s *Service) Movies(ctx context.Context, page, limit int) (Page, error) {
 		Order(ent.Desc(movie.FieldCreatedAt), ent.Desc(movie.FieldID)).
 		Offset((page - 1) * limit).Limit(limit).
 		WithActors(func(query *ent.ActorQuery) {
-			query.Select(actor.FieldID, actor.FieldJavdbID, actor.FieldName).Order(ent.Asc(actor.FieldName), ent.Asc(actor.FieldID))
+			query.Select(actor.FieldID, actor.FieldProvider, actor.FieldSourceID, actor.FieldName).Order(ent.Asc(actor.FieldName), ent.Asc(actor.FieldID))
 		}).
 		WithTags(func(query *ent.TagQuery) {
-			query.Select(tag.FieldID, tag.FieldJavdbID, tag.FieldName).Order(ent.Asc(tag.FieldName), ent.Asc(tag.FieldID))
+			query.Select(tag.FieldID, tag.FieldProvider, tag.FieldSourceID, tag.FieldName).Order(ent.Asc(tag.FieldName), ent.Asc(tag.FieldID))
 		}).All(ctx)
 	if err != nil {
 		return result, fmt.Errorf("list library movies: %w", err)
@@ -274,10 +295,10 @@ func (s *Service) Movies(ctx context.Context, page, limit int) (Page, error) {
 			item.Fanart = record.Fanarts[0]
 		}
 		for _, person := range record.Edges.Actors {
-			item.Actors = append(item.Actors, Entity{ID: person.JavdbID, Name: person.Name})
+			item.Actors = append(item.Actors, Entity{Provider: person.Provider, ID: person.SourceID, Name: person.Name})
 		}
 		for _, label := range record.Edges.Tags {
-			item.Tags = append(item.Tags, Tag{ID: label.ID, JavDBID: label.JavdbID, Name: label.Name})
+			item.Tags = append(item.Tags, Tag{ID: label.ID, Provider: label.Provider, SourceID: label.SourceID, Name: label.Name})
 		}
 		result.Movies = append(result.Movies, item)
 	}

@@ -1,12 +1,21 @@
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { isValidElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { toast } from 'sonner'
+import { test, vi } from 'vitest'
 
+import type { ScanTask } from '@/api/tasks'
 import { taskProgressState, type TaskStage } from '@/features/tasks/task-progress-state'
+import { scanStatus } from '@/features/tasks/scan-status'
+import { notifyOfflineTask, notifyScanTask } from '@/features/tasks/task-toast'
+import { offlineSubmission } from './fixtures'
+
+vi.mock('sonner', () => ({ toast: { info: vi.fn() } }))
 
 test('scan and download workflows advance through their own stages', () => {
   assert.equal(taskProgressState('scanning').value, 0)
   assert.equal(taskProgressState('scraping').value, 50)
-  assert.equal(taskProgressState('artwork', false, 50).value, 87.5)
+  assert.equal(taskProgressState('artwork', false, 50).value, 75)
   assert.equal(taskProgressState('downloading', true, 50).value, 10)
   assert.equal(taskProgressState('scanning', true).value, 20)
   assert.equal(taskProgressState('done').value, 100)
@@ -30,7 +39,85 @@ test('an unknown or unavailable phase stays indeterminate instead of crashing', 
 
 test('invalid numeric progress cannot escape its current stage or produce NaN', () => {
   for (const value of [-1, NaN, Infinity]) {
-    assert.equal(taskProgressState('artwork', false, value).value, 75)
+    assert.equal(taskProgressState('artwork', false, value).value, 50)
   }
   assert.equal(taskProgressState('downloading', true, 120).value, 20)
+})
+
+test('metadata and artwork share batch progress in scan and offline notifications', () => {
+  const scan: ScanTask = {
+    id: 1,
+    type: 'scan',
+    status: 'running',
+    progress: 0,
+    created_at: '2026-10-01T09:00:00Z',
+    updated_at: '2026-10-01T09:00:00Z',
+    source: { account_id: 'account', directory: { id: 'root', name: 'Movies', path: '/Movies' } },
+    scan: {
+      stage: 'scraping',
+      current_path: '/Movies',
+      directories_discovered: 1,
+      directories_scanned: 1,
+      files_scanned: 4,
+      video_files: 4,
+      matched_files: 4,
+      unmatched_files: 0,
+      movies: 4,
+      removed_files: 0,
+      removed_movies: 0,
+      metadata_total: 4,
+      metadata_completed: 0
+    }
+  }
+  const offline = offlineSubmission({ phase: 'downloaded', processing: true, scan_task_id: 1 })
+  const sequence = [
+    ['scraping', 0],
+    ['artwork', 0],
+    ['scraping', 1],
+    ['artwork', 1],
+    ['scraping', 2],
+    ['artwork', 3]
+  ] as const
+  for (const isOffline of [false, true]) {
+    let previous = 0
+    for (const [stage, completed] of sequence) {
+      scan.scan.stage = stage
+      scan.scan.metadata_completed = completed
+      scan.progress = (completed / 4) * 100
+      if (isOffline) notifyOfflineTask(offline, { scan })
+      else notifyScanTask(scan)
+
+      const options = vi.mocked(toast.info).mock.lastCall?.[1]
+      assert.ok(isValidElement(options?.description))
+      const html = renderToStaticMarkup(options.description)
+      const value = Number(html.match(/aria-valuenow="([^"]+)"/)?.[1])
+      assert.ok(Number.isFinite(value) && value >= previous, `${stage}: ${previous} -> ${value}`)
+      assert.equal(value, isOffline ? 60 + completed * 10 : 50 + completed * 12.5)
+      assert.ok(!html.includes(`${completed} / 4 部`))
+      previous = value
+    }
+    scan.status = 'queued'
+    scan.scan.metadata_retrying = 1
+    assert.equal(scanStatus(scan), '等待自动重试')
+    if (isOffline) notifyOfflineTask(offline, { scan })
+    else notifyScanTask(scan)
+    const options = vi.mocked(toast.info).mock.lastCall?.[1]
+    assert.ok(isValidElement(options?.description))
+    const html = renderToStaticMarkup(options.description)
+    assert.ok(html.includes('等待自动重试'))
+    assert.ok(!html.includes('1 部等待重试'))
+    assert.equal(Number(html.match(/aria-valuenow="([^"]+)"/)?.[1]), previous)
+    scan.paused = true
+    assert.equal(scanStatus(scan), '已暂停')
+    if (isOffline) notifyOfflineTask(offline, { scan })
+    else notifyScanTask(scan)
+    const pausedOptions = vi.mocked(toast.info).mock.lastCall?.[1]
+    assert.ok(isValidElement(pausedOptions?.description))
+    const pausedHTML = renderToStaticMarkup(pausedOptions.description)
+    assert.ok(pausedHTML.includes('已暂停'))
+    assert.equal(Number(pausedHTML.match(/aria-valuenow="([^"]+)"/)?.[1]), previous)
+    scan.paused = false
+    scan.status = 'running'
+    scan.scan.metadata_retrying = 0
+  }
 })

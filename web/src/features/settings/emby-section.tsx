@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { LoaderCircleIcon, RefreshCwIcon, TvMinimalIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { describeApiError } from '@/api/client'
 import { type EmbyConfig, useEmbyConfig, useTestEmbyConfig, useUpdateEmbyConfig } from '@/api/emby'
 import { InlineError } from '@/components/error-state'
 import { Button } from '@/components/ui/button'
@@ -69,6 +70,29 @@ export function EmbySection() {
     }))
   }
 
+  function handleToggle(checked: boolean) {
+    if (checked) {
+      updateField('enabled', true)
+      return
+    }
+
+    setForm(null)
+    if (!config?.enabled) return
+
+    updateConfig.mutate(
+      { ...config, enabled: false },
+      {
+        onSuccess: next => {
+          setForm(configToFormData(next))
+          toast.success('已关闭 Emby')
+        },
+        onError: error => {
+          toast.error(describeApiError(error))
+        }
+      }
+    )
+  }
+
   function handleHostBlur() {
     const raw = current.host.trim()
     if (!raw) return
@@ -106,7 +130,7 @@ export function EmbySection() {
           })
         },
         onError: error => {
-          toast.error(error instanceof Error ? error.message : '连接 Emby 服务器失败')
+          toast.error(describeApiError(error))
         }
       }
     )
@@ -144,7 +168,7 @@ export function EmbySection() {
         toast.success('Emby 设置已保存')
       },
       onError: error => {
-        toast.error(error instanceof Error ? error.message : '保存 Emby 设置失败')
+        toast.error(describeApiError(error))
       }
     })
   }
@@ -156,105 +180,97 @@ export function EmbySection() {
         description="媒体扫描与刮削完成后，主动通知 Emby 增量刷新"
         inline
       >
-        <Switch
-          checked={current.enabled}
-          disabled={disabled}
-          onCheckedChange={checked => updateField('enabled', checked)}
-        />
+        <Switch checked={current.enabled} disabled={disabled} onCheckedChange={handleToggle} />
       </SettingRow>
 
-      <SettingRow
-        title="同步演员头像"
-        description="自动匹配 GFriends 高清女优头像并同步至 Emby"
-        inline
-      >
-        <Switch
-          checked={current.sync_actors}
-          disabled={disabled || !current.enabled}
-          onCheckedChange={checked => updateField('sync_actors', checked)}
-        />
-      </SettingRow>
+      {current.enabled ? (
+        <>
+          <SettingRow
+            title="同步演员头像"
+            description="自动匹配 GFriends 高清女优头像并同步至 Emby"
+            inline
+          >
+            <Switch
+              checked={current.sync_actors}
+              disabled={disabled}
+              onCheckedChange={checked => updateField('sync_actors', checked)}
+            />
+          </SettingRow>
 
-      <SettingRow title="服务器地址" description="Emby 服务的 IP 或域名">
-        <Input
-          value={current.host}
-          placeholder="http://192.168.1.100"
-          disabled={disabled}
-          onChange={e => updateField('host', e.target.value)}
-          onBlur={handleHostBlur}
-        />
-      </SettingRow>
+          <SettingRow title="服务器地址" description="Emby 服务的 IP 或域名">
+            <Input
+              autoFocus={form?.enabled === true && !initial.enabled}
+              value={current.host}
+              placeholder="http://192.168.1.100"
+              disabled={disabled}
+              onChange={e => updateField('host', e.target.value)}
+              onBlur={handleHostBlur}
+            />
+          </SettingRow>
 
-      <SettingRow title="端口" description="Emby 服务端口，默认 8096">
-        <Input
-          value={current.port}
-          placeholder="8096"
-          disabled={disabled}
-          onChange={e => updateField('port', e.target.value)}
-        />
-      </SettingRow>
+          <SettingRow title="端口" description="Emby 服务端口，默认 8096">
+            <Input
+              value={current.port}
+              placeholder="8096"
+              disabled={disabled}
+              onChange={e => updateField('port', e.target.value)}
+            />
+          </SettingRow>
 
-      <SettingRow
-        title="Miyabi 对外服务地址"
-        description="生成 STRM 播放文件时写入的对外地址，供播放器直接访问。留空自动使用局域网 IP"
-      >
-        <Input
-          value={current.public_url}
-          placeholder="http://<局域网IP>:8080"
-          disabled={disabled}
-          onChange={e => updateField('public_url', e.target.value)}
-        />
-      </SettingRow>
+          <SettingRow
+            title="Miyabi 对外服务地址"
+            description="生成 STRM 播放文件时写入的对外地址，供播放器直接访问。留空自动使用局域网 IP"
+          >
+            <Input
+              value={current.public_url}
+              placeholder="http://<局域网IP>:8080"
+              disabled={disabled}
+              onChange={e => updateField('public_url', e.target.value)}
+            />
+          </SettingRow>
 
-      <SettingRow title="API Key" description="在 Emby 管理后台「高级」→「API 密钥」中生成">
-        <Input
-          type="password"
-          value={current.api_key}
-          placeholder="填入 Emby API Key"
-          disabled={disabled}
-          onChange={e => updateField('api_key', e.target.value)}
-        />
-      </SettingRow>
+          <SettingRow title="API Key" description="在 Emby 管理后台「高级」→「API 密钥」中生成">
+            <Input
+              type="password"
+              value={current.api_key}
+              placeholder="填入 Emby API Key"
+              disabled={disabled}
+              onChange={e => updateField('api_key', e.target.value)}
+            />
+          </SettingRow>
 
-      <SettingRow
-        title="Emby 媒体库路径"
-        description="Emby 容器内挂载的对应目录。留空则默认使用本地导出路径"
-      >
-        <Input
-          value={current.media_path}
-          placeholder="/media"
-          disabled={disabled}
-          onChange={e => updateField('media_path', e.target.value)}
-        />
-      </SettingRow>
+          <SettingRow
+            title="Emby 媒体库路径"
+            description="Emby 容器内挂载的对应目录。留空则默认使用本地导出路径"
+          >
+            <Input
+              value={current.media_path}
+              placeholder="/media"
+              disabled={disabled}
+              onChange={e => updateField('media_path', e.target.value)}
+            />
+          </SettingRow>
 
-      <SettingRow
-        title="本地媒体输出目录"
-        description="STRM 与元数据默认在此保留 115 原目录结构；项目刮削结果存放在 miyabi/番号前缀/番号 下。Emby 需挂载并扫描此目录。"
-      >
-        <div className="text-sm break-all">
-          {config?.local_dir || '默认使用数据目录下的 emby 子目录'}
-        </div>
-      </SettingRow>
-
-      <div className="flex items-center justify-end gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={disabled || testConfig.isPending}
-          onClick={handleTest}
-        >
-          <RefreshCwIcon className={cn('size-3.5', testConfig.isPending && 'animate-spin')} />
-          测试连接
-        </Button>
-        <Button type="button" size="sm" disabled={disabled || !isDirty} onClick={handleSave}>
-          {updateConfig.isPending ? (
-            <LoaderCircleIcon className="mr-1.5 size-3.5 animate-spin" />
-          ) : null}
-          保存
-        </Button>
-      </div>
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={disabled || testConfig.isPending}
+              onClick={handleTest}
+            >
+              <RefreshCwIcon className={cn('size-3.5', testConfig.isPending && 'animate-spin')} />
+              测试连接
+            </Button>
+            <Button type="button" size="sm" disabled={disabled || !isDirty} onClick={handleSave}>
+              {updateConfig.isPending ? (
+                <LoaderCircleIcon className="mr-1.5 size-3.5 animate-spin" />
+              ) : null}
+              保存
+            </Button>
+          </div>
+        </>
+      ) : null}
 
       {emby.isError ? <InlineError>后端服务暂不可用，无法读取 Emby 配置。</InlineError> : null}
     </SettingsSection>

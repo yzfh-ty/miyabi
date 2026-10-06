@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/ent/movie"
+	"github.com/ppxb/miyabi/internal/nfo"
 )
 
 // Movie is the model entity for the Movie schema.
@@ -25,6 +26,10 @@ type Movie struct {
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// Code holds the value of the "code" field.
 	Code string `json:"code,omitempty"`
+	// ManualCode holds the value of the "manual_code" field.
+	ManualCode string `json:"manual_code,omitempty"`
+	// Candidate grouping key; equivalence must still be checked against code.
+	CanonicalCode string `json:"canonical_code,omitempty"`
 	// JavdbID holds the value of the "javdb_id" field.
 	JavdbID *string `json:"javdb_id,omitempty"`
 	// Title holds the value of the "title" field.
@@ -53,6 +58,8 @@ type Movie struct {
 	Poster *string `json:"poster,omitempty"`
 	// Fanarts holds the value of the "fanarts" field.
 	Fanarts []string `json:"fanarts,omitempty"`
+	// Metadata holds the value of the "metadata" field.
+	Metadata *nfo.Movie `json:"metadata,omitempty"`
 	// MetadataSnapshot holds the value of the "metadata_snapshot" field.
 	MetadataSnapshot *domain.MetadataSnapshot `json:"metadata_snapshot,omitempty"`
 	// ScrapeStatus holds the value of the "scrape_status" field.
@@ -119,13 +126,13 @@ func (*Movie) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case movie.FieldFanarts, movie.FieldMetadataSnapshot:
+		case movie.FieldFanarts, movie.FieldMetadata, movie.FieldMetadataSnapshot:
 			values[i] = new([]byte)
 		case movie.FieldRating:
 			values[i] = new(sql.NullFloat64)
 		case movie.FieldID, movie.FieldDuration:
 			values[i] = new(sql.NullInt64)
-		case movie.FieldCode, movie.FieldJavdbID, movie.FieldTitle, movie.FieldDirectorID, movie.FieldDirectorName, movie.FieldMakerID, movie.FieldMakerName, movie.FieldSeriesID, movie.FieldSeriesName, movie.FieldCover, movie.FieldPoster, movie.FieldScrapeStatus:
+		case movie.FieldCode, movie.FieldManualCode, movie.FieldCanonicalCode, movie.FieldJavdbID, movie.FieldTitle, movie.FieldDirectorID, movie.FieldDirectorName, movie.FieldMakerID, movie.FieldMakerName, movie.FieldSeriesID, movie.FieldSeriesName, movie.FieldCover, movie.FieldPoster, movie.FieldScrapeStatus:
 			values[i] = new(sql.NullString)
 		case movie.FieldCreatedAt, movie.FieldUpdatedAt, movie.FieldReleaseDate:
 			values[i] = new(sql.NullTime)
@@ -167,6 +174,18 @@ func (_m *Movie) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field code", values[i])
 			} else if value.Valid {
 				_m.Code = value.String
+			}
+		case movie.FieldManualCode:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field manual_code", values[i])
+			} else if value.Valid {
+				_m.ManualCode = value.String
+			}
+		case movie.FieldCanonicalCode:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field canonical_code", values[i])
+			} else if value.Valid {
+				_m.CanonicalCode = value.String
 			}
 		case movie.FieldJavdbID:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -266,6 +285,14 @@ func (_m *Movie) assignValues(columns []string, values []any) error {
 					return fmt.Errorf("unmarshal field fanarts: %w", err)
 				}
 			}
+		case movie.FieldMetadata:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field metadata", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.Metadata); err != nil {
+					return fmt.Errorf("unmarshal field metadata: %w", err)
+				}
+			}
 		case movie.FieldMetadataSnapshot:
 			if value, ok := values[i].(*[]byte); !ok {
 				return fmt.Errorf("unexpected type %T for field metadata_snapshot", values[i])
@@ -345,6 +372,12 @@ func (_m *Movie) String() string {
 	builder.WriteString("code=")
 	builder.WriteString(_m.Code)
 	builder.WriteString(", ")
+	builder.WriteString("manual_code=")
+	builder.WriteString(_m.ManualCode)
+	builder.WriteString(", ")
+	builder.WriteString("canonical_code=")
+	builder.WriteString(_m.CanonicalCode)
+	builder.WriteString(", ")
 	if v := _m.JavdbID; v != nil {
 		builder.WriteString("javdb_id=")
 		builder.WriteString(*v)
@@ -410,6 +443,9 @@ func (_m *Movie) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("fanarts=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Fanarts))
+	builder.WriteString(", ")
+	builder.WriteString("metadata=")
+	builder.WriteString(fmt.Sprintf("%v", _m.Metadata))
 	builder.WriteString(", ")
 	builder.WriteString("metadata_snapshot=")
 	builder.WriteString(fmt.Sprintf("%v", _m.MetadataSnapshot))

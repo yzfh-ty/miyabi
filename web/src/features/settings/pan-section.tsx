@@ -107,7 +107,11 @@ export function PanSection() {
             disabled={account.isError || disconnect.isPending}
           />
           {account.data?.directory ? (
-            <PanSidecarSync key={`${profile.id}:${account.data.directory.id}`} accountID={profile.id} parent={account.data.directory} />
+            <PanSidecarSync
+              key={`${profile.id}:${account.data.directory.id}`}
+              accountID={profile.id}
+              parent={account.data.directory}
+            />
           ) : null}
           <PanStorageUsage space={profile.space} />
         </>

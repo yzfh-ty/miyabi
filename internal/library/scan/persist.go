@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"path"
+	"slices"
 
 	"github.com/ppxb/miyabi/internal/codeid"
 	"github.com/ppxb/miyabi/internal/domain"
@@ -36,7 +37,9 @@ func (r *scanRun) processPageTx(ctx context.Context, tx *ent.Tx, directoryPath s
 		previous, err := tx.File.Query().Where(file.FileIDIn(ids...)).
 			Select(file.FieldID, file.FieldFileID, file.FieldName, file.FieldParentID, file.FieldSize,
 				file.FieldSha1, file.FieldPickCode, file.FieldAccountID, file.FieldRootID, file.FieldPath, file.FieldMovieID).
-			WithMovie(func(q *ent.MovieQuery) { q.Select(movie.FieldID, movie.FieldCode, movie.FieldJavdbID) }).All(ctx)
+			WithMovie(func(q *ent.MovieQuery) {
+				q.Select(movie.FieldID, movie.FieldCode, movie.FieldJavdbID, movie.FieldManualCode)
+			}).All(ctx)
 		if err != nil {
 			return fmt.Errorf("load previous file associations: %w", err)
 		}
@@ -64,7 +67,7 @@ func (r *scanRun) processPageTx(ctx context.Context, tx *ent.Tx, directoryPath s
 				}
 			}
 		}
-		if len(codes) > 0 && r.payload.OfflineTaskID != 0 && r.payload.TargetID != "" {
+		if len(codes) > 0 && r.payload.OfflineTaskID != 0 && r.payload.TargetID != "" && !slices.ContainsFunc(videos, func(v Video) bool { return v.Manual }) {
 			id, err := IndexDownloadedMovie(ctx, tx, *r.payload)
 			if err != nil {
 				return err
@@ -163,12 +166,12 @@ func (r *scanRun) processPageTx(ctx context.Context, tx *ent.Tx, directoryPath s
 	} else if offlineChanged {
 		change = tasks.ChangeOffline
 	}
-	r.notifyAfterCommit(tx, change)
+	r.notifyAfterCommit(tx, change, false)
 	return nil
 }
 
 // Keep revisions and wakeups consistent with committed scan data.
-func (r *scanRun) notifyAfterCommit(tx *ent.Tx, change tasks.Change) {
+func (r *scanRun) notifyAfterCommit(tx *ent.Tx, change tasks.Change, queued bool) {
 	svc := r.scanner.tasksSvc
 	if svc == nil {
 		return
@@ -184,7 +187,10 @@ func (r *scanRun) notifyAfterCommit(tx *ent.Tx, change tasks.Change) {
 			case tasks.ChangeOffline:
 				svc.NotifyOfflineChanged()
 			default:
-				svc.Notify()
+				svc.NotifyUI()
+			}
+			if queued {
+				svc.WakePool()
 			}
 			return nil
 		})
@@ -257,7 +263,7 @@ func ReportScan(ctx context.Context, client *ent.TaskClient, taskID int, payload
 		return err
 	}
 	if tasksSvc != nil {
-		tasksSvc.Notify()
+		tasksSvc.NotifyUI()
 	}
 	return nil
 }

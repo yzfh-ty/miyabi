@@ -19,6 +19,7 @@ import (
 	"github.com/ppxb/miyabi/internal/ent/predicate"
 	"github.com/ppxb/miyabi/internal/ent/subtitle"
 	"github.com/ppxb/miyabi/internal/ent/tag"
+	"github.com/ppxb/miyabi/internal/nfo"
 )
 
 // MovieUpdate is the builder for updating Movie entities.
@@ -50,6 +51,34 @@ func (_u *MovieUpdate) SetCode(v string) *MovieUpdate {
 func (_u *MovieUpdate) SetNillableCode(v *string) *MovieUpdate {
 	if v != nil {
 		_u.SetCode(*v)
+	}
+	return _u
+}
+
+// SetManualCode sets the "manual_code" field.
+func (_u *MovieUpdate) SetManualCode(v string) *MovieUpdate {
+	_u.mutation.SetManualCode(v)
+	return _u
+}
+
+// SetNillableManualCode sets the "manual_code" field if the given value is not nil.
+func (_u *MovieUpdate) SetNillableManualCode(v *string) *MovieUpdate {
+	if v != nil {
+		_u.SetManualCode(*v)
+	}
+	return _u
+}
+
+// SetCanonicalCode sets the "canonical_code" field.
+func (_u *MovieUpdate) SetCanonicalCode(v string) *MovieUpdate {
+	_u.mutation.SetCanonicalCode(v)
+	return _u
+}
+
+// SetNillableCanonicalCode sets the "canonical_code" field if the given value is not nil.
+func (_u *MovieUpdate) SetNillableCanonicalCode(v *string) *MovieUpdate {
+	if v != nil {
+		_u.SetCanonicalCode(*v)
 	}
 	return _u
 }
@@ -334,6 +363,18 @@ func (_u *MovieUpdate) AppendFanarts(v []string) *MovieUpdate {
 	return _u
 }
 
+// SetMetadata sets the "metadata" field.
+func (_u *MovieUpdate) SetMetadata(v *nfo.Movie) *MovieUpdate {
+	_u.mutation.SetMetadata(v)
+	return _u
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (_u *MovieUpdate) ClearMetadata() *MovieUpdate {
+	_u.mutation.ClearMetadata()
+	return _u
+}
+
 // SetMetadataSnapshot sets the "metadata_snapshot" field.
 func (_u *MovieUpdate) SetMetadataSnapshot(v *domain.MetadataSnapshot) *MovieUpdate {
 	_u.mutation.SetMetadataSnapshot(v)
@@ -511,7 +552,9 @@ func (_u *MovieUpdate) RemoveSubtitles(v ...*Subtitle) *MovieUpdate {
 
 // Save executes the query and returns the number of nodes affected by the update operation.
 func (_u *MovieUpdate) Save(ctx context.Context) (int, error) {
-	_u.defaults()
+	if err := _u.defaults(); err != nil {
+		return 0, err
+	}
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
@@ -538,11 +581,15 @@ func (_u *MovieUpdate) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *MovieUpdate) defaults() {
+func (_u *MovieUpdate) defaults() error {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
+		if movie.UpdateDefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized movie.UpdateDefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := movie.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -577,6 +624,12 @@ func (_u *MovieUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Code(); ok {
 		_spec.SetField(movie.FieldCode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ManualCode(); ok {
+		_spec.SetField(movie.FieldManualCode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.CanonicalCode(); ok {
+		_spec.SetField(movie.FieldCanonicalCode, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.JavdbID(); ok {
 		_spec.SetField(movie.FieldJavdbID, field.TypeString, value)
@@ -666,6 +719,12 @@ func (_u *MovieUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		_spec.AddModifier(func(u *sql.UpdateBuilder) {
 			sqljson.Append(u, movie.FieldFanarts, value)
 		})
+	}
+	if value, ok := _u.mutation.Metadata(); ok {
+		_spec.SetField(movie.FieldMetadata, field.TypeJSON, value)
+	}
+	if _u.mutation.MetadataCleared() {
+		_spec.ClearField(movie.FieldMetadata, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.MetadataSnapshot(); ok {
 		_spec.SetField(movie.FieldMetadataSnapshot, field.TypeJSON, value)
@@ -892,6 +951,34 @@ func (_u *MovieUpdateOne) SetCode(v string) *MovieUpdateOne {
 func (_u *MovieUpdateOne) SetNillableCode(v *string) *MovieUpdateOne {
 	if v != nil {
 		_u.SetCode(*v)
+	}
+	return _u
+}
+
+// SetManualCode sets the "manual_code" field.
+func (_u *MovieUpdateOne) SetManualCode(v string) *MovieUpdateOne {
+	_u.mutation.SetManualCode(v)
+	return _u
+}
+
+// SetNillableManualCode sets the "manual_code" field if the given value is not nil.
+func (_u *MovieUpdateOne) SetNillableManualCode(v *string) *MovieUpdateOne {
+	if v != nil {
+		_u.SetManualCode(*v)
+	}
+	return _u
+}
+
+// SetCanonicalCode sets the "canonical_code" field.
+func (_u *MovieUpdateOne) SetCanonicalCode(v string) *MovieUpdateOne {
+	_u.mutation.SetCanonicalCode(v)
+	return _u
+}
+
+// SetNillableCanonicalCode sets the "canonical_code" field if the given value is not nil.
+func (_u *MovieUpdateOne) SetNillableCanonicalCode(v *string) *MovieUpdateOne {
+	if v != nil {
+		_u.SetCanonicalCode(*v)
 	}
 	return _u
 }
@@ -1176,6 +1263,18 @@ func (_u *MovieUpdateOne) AppendFanarts(v []string) *MovieUpdateOne {
 	return _u
 }
 
+// SetMetadata sets the "metadata" field.
+func (_u *MovieUpdateOne) SetMetadata(v *nfo.Movie) *MovieUpdateOne {
+	_u.mutation.SetMetadata(v)
+	return _u
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (_u *MovieUpdateOne) ClearMetadata() *MovieUpdateOne {
+	_u.mutation.ClearMetadata()
+	return _u
+}
+
 // SetMetadataSnapshot sets the "metadata_snapshot" field.
 func (_u *MovieUpdateOne) SetMetadataSnapshot(v *domain.MetadataSnapshot) *MovieUpdateOne {
 	_u.mutation.SetMetadataSnapshot(v)
@@ -1366,7 +1465,9 @@ func (_u *MovieUpdateOne) Select(field string, fields ...string) *MovieUpdateOne
 
 // Save executes the query and returns the updated Movie entity.
 func (_u *MovieUpdateOne) Save(ctx context.Context) (*Movie, error) {
-	_u.defaults()
+	if err := _u.defaults(); err != nil {
+		return nil, err
+	}
 	return withHooks(ctx, _u.sqlSave, _u.mutation, _u.hooks)
 }
 
@@ -1393,11 +1494,15 @@ func (_u *MovieUpdateOne) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_u *MovieUpdateOne) defaults() {
+func (_u *MovieUpdateOne) defaults() error {
 	if _, ok := _u.mutation.UpdatedAt(); !ok {
+		if movie.UpdateDefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized movie.UpdateDefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := movie.UpdateDefaultUpdatedAt()
 		_u.mutation.SetUpdatedAt(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -1449,6 +1554,12 @@ func (_u *MovieUpdateOne) sqlSave(ctx context.Context) (_node *Movie, err error)
 	}
 	if value, ok := _u.mutation.Code(); ok {
 		_spec.SetField(movie.FieldCode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.ManualCode(); ok {
+		_spec.SetField(movie.FieldManualCode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.CanonicalCode(); ok {
+		_spec.SetField(movie.FieldCanonicalCode, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.JavdbID(); ok {
 		_spec.SetField(movie.FieldJavdbID, field.TypeString, value)
@@ -1538,6 +1649,12 @@ func (_u *MovieUpdateOne) sqlSave(ctx context.Context) (_node *Movie, err error)
 		_spec.AddModifier(func(u *sql.UpdateBuilder) {
 			sqljson.Append(u, movie.FieldFanarts, value)
 		})
+	}
+	if value, ok := _u.mutation.Metadata(); ok {
+		_spec.SetField(movie.FieldMetadata, field.TypeJSON, value)
+	}
+	if _u.mutation.MetadataCleared() {
+		_spec.ClearField(movie.FieldMetadata, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.MetadataSnapshot(); ok {
 		_spec.SetField(movie.FieldMetadataSnapshot, field.TypeJSON, value)

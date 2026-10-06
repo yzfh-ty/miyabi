@@ -26,18 +26,20 @@ export function LibraryPage({
   const tasks = useTasks()
   const connection = useTaskConnection()
   const source = library.data?.source
-  const latest = tasks.data?.filter(isScanTask).find(task => sameSource(task.source, source))
+  const sourceTasks = tasks.data?.filter(isScanTask).filter(task => sameSource(task.source, source))
+  const latest = sourceTasks?.find(task => !task.movie_id && !task.offline_task_id)
   const scanning = latest !== undefined && isTaskActive(latest)
+  const processingMovies = new Set(sourceTasks?.filter(isTaskActive).map(task => task.movie_id))
 
   return (
     <AppPage>
-      <PageHeader title="媒体库" description="来自 115 网盘的影片索引" inlineActions>
+      <PageHeader title="媒体库" description="来自 115 网盘的影片" inlineActions>
         <LibraryScanButton
           loading={library.isPending}
           available={!!source}
           scanning={scanning}
+          rebuilding={!!latest?.rebuild}
           connected={connection.status === 'connected'}
-          failed={latest?.status === 'failed'}
           onStarted={() => onPageChange(1)}
         />
         {library.isSuccess && !source ? (
@@ -70,7 +72,11 @@ export function LibraryPage({
           {library.data.movies.length > 0 ? (
             <MovieGridLayout>
               {library.data.movies.map(movie => (
-                <LibraryMovieCard key={movie.id} movie={movie} />
+                <LibraryMovieCard
+                  key={movie.id}
+                  movie={movie}
+                  busy={!source || scanning || processingMovies.has(movie.id)}
+                />
               ))}
             </MovieGridLayout>
           ) : (
@@ -78,9 +84,11 @@ export function LibraryPage({
               className="min-h-0 flex-1 py-12"
               title={
                 !source
-                  ? '登录 115 并挂载媒体目录后，将自动扫描入库'
+                  ? '登录 115 并挂载媒体目录后，将自动同步入库'
                   : scanning
-                    ? '正在扫描，识别到的影片会陆续显示'
+                    ? connection.status === 'connected'
+                      ? `${latest?.rebuild ? '正在重建' : '正在同步'}，识别到的影片会陆续显示`
+                      : '连接中，等待更新媒体库进度'
                     : '未识别到影片'
               }
             />

@@ -21,7 +21,6 @@ import (
 	"github.com/ppxb/miyabi/internal/ent/subscription"
 	"github.com/ppxb/miyabi/internal/ent/task"
 	mediaimage "github.com/ppxb/miyabi/internal/image"
-	"github.com/ppxb/miyabi/internal/javdb"
 	"github.com/ppxb/miyabi/internal/library"
 	"github.com/ppxb/miyabi/internal/maintenance"
 	"github.com/ppxb/miyabi/internal/monitor"
@@ -103,15 +102,6 @@ func (goldenDiscover) Tags(context.Context, domain.Zone) ([]domain.TagCategory, 
 	return []domain.TagCategory{{ID: "category-1", Name: "主題", Tags: []domain.TagOption{{ID: "tag-1", Name: "Tag"}, {ID: "tag-2", Name: "Other"}}}}, nil
 }
 
-func (goldenDiscover) Route() catalogue.RouteStatus {
-	return catalogue.RouteStatus{Host: "https://api.example", LatencyMS: 125, Active: true, Manual: false,
-		Candidates: []catalogue.RouteCandidate{
-			{Host: "https://api.example", LatencyMS: 125, Status: javdb.RouteAvailable},
-			{Host: "https://backup.example", LatencyMS: 0, Status: javdb.RouteUnavailable},
-			{Host: "https://untested.example", Status: javdb.RouteUntested},
-		}}
-}
-
 type goldenLibrary struct {
 	LibraryManager
 }
@@ -130,7 +120,7 @@ func (goldenLibrary) Movies(context.Context, int, int) (library.Page, error) {
 			ReleaseDate: "2026-08-01", Duration: 120, Rating: 4.5,
 			Director: &library.Entity{ID: "director-1", Name: "Director"}, Maker: &library.Entity{ID: "maker-1", Name: "Maker"},
 			Series: &library.Entity{ID: "series-1", Name: "Series"},
-			Actors: []library.Entity{{ID: "actor-1", Name: "Actor"}}, Tags: []library.Tag{{ID: 3, JavDBID: "tag-1", Name: "Tag"}},
+			Actors: []library.Entity{{ID: "actor-1", Name: "Actor"}}, Tags: []library.Tag{{ID: 3, Provider: "javdb", SourceID: "tag-1", Name: "Tag"}},
 			ScrapeStatus: movie.ScrapeStatusDone},
 		{ID: 8, Code: "ZZZ-999", Actors: []library.Entity{}, Tags: []library.Tag{}, ScrapeStatus: movie.ScrapeStatusFailed},
 	}}, nil
@@ -244,7 +234,6 @@ func TestResponseContractsMatchGoldenFiles(t *testing.T) {
 		{name: "discover_movie_states", method: http.MethodPost, path: "/api/discover/movie-states",
 			body: `{"movies":[{"id":"movie-exact","code":"ABP-123"},{"id":"movie-near","code":"ABP-124"},{"id":"movie-saving","code":"SONE-001"}]}`},
 		{name: "discover_tags", method: http.MethodGet, path: "/api/discover/tags?zone=censored"},
-		{name: "javdb_route", method: http.MethodGet, path: "/api/javdb/route"},
 		{name: "library_movies", method: http.MethodGet, path: "/api/library/movies"},
 		{name: "tasks", method: http.MethodGet, path: "/api/tasks"},
 		{name: "offline_tasks", method: http.MethodGet, path: "/api/offline/tasks"},

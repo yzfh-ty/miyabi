@@ -183,17 +183,42 @@ func Layers(name string) [][]string {
 
 // Queries returns the search query candidates for a catalogue code,
 // including provider variants such as "FC2-1234567" for "FC2-PPV-1234567",
-// and its unpadded numeric variant if applicable (e.g. "ABC-00123" -> ["ABC-00123", "ABC-123"]).
+// date separators, Western year spellings and unpadded numeric sequences.
 func Queries(candidate string) []string {
 	var queries []string
 	if strings.HasPrefix(candidate, "FC2-PPV-") {
 		queries = append(queries, "FC2-"+strings.TrimPrefix(candidate, "FC2-PPV-"))
 	}
 	queries = append(queries, candidate)
+	if variant := dateVariant(candidate); variant != "" {
+		queries = append(queries, variant)
+	}
 	if unpadded, ok := unpaddedNumericCandidate(candidate); ok {
 		queries = append(queries, unpadded)
 	}
 	return queries
+}
+
+// dateVariant preserves the entire identity, including any scene suffix.
+// Two-digit Western years refer to 2000–2099; other centuries stay distinct.
+func dateVariant(code string) string {
+	if numericPattern.MatchString(code) {
+		if strings.Contains(code, "_") {
+			return strings.ReplaceAll(code, "_", "-")
+		}
+		return strings.ReplaceAll(code, "-", "_")
+	}
+	if westernPattern.MatchString(code) {
+		parts := strings.SplitN(code, ".", 3)
+		year := parts[1]
+		if len(year) == 2 {
+			return parts[0] + ".20" + year + "." + parts[2]
+		}
+		if strings.HasPrefix(year, "20") {
+			return parts[0] + "." + year[2:] + "." + parts[2]
+		}
+	}
+	return ""
 }
 
 // Normalize builds a comparison key for a complete catalogue number, applying
@@ -222,6 +247,17 @@ func Normalize(raw string) string {
 	return value
 }
 
+// Valid reports whether the entire input is a catalogue number, not a filename or URL.
+func Valid(raw string) bool {
+	value := Normalize(raw)
+	for _, pattern := range []*regexp.Regexp{westernPattern, fc2Pattern, numericPattern, heydougaPattern, compactDatePattern, separatedPattern, letterSerialPattern, compactPattern} {
+		if pattern.MatchString(value) {
+			return true
+		}
+	}
+	return false
+}
+
 // Candidates lists the catalogue numbers that may name the same movie as code,
 // most specific first. Release filenames decorate catalogue numbers in ways
 // catalogue sites omit: distributor label digits before the prefix (259LUXU-1899
@@ -238,6 +274,21 @@ func Candidates(code string) []string {
 		candidates = append(candidates, fallbacks[len(fallbacks)-1])
 	}
 	return candidates
+}
+
+// MatchKey groups possible equivalents for indexed lookups. Query its spelling
+// variants with Queries; stored keys retain the original date/year spelling.
+// Sharing a key is not proof of identity: callers must still check IsEquivalent.
+func MatchKey(code string) string {
+	candidates := Candidates(code)
+	if len(candidates) == 0 {
+		return ""
+	}
+	key := candidates[len(candidates)-1]
+	if unpadded, ok := unpaddedNumericCandidate(key); ok {
+		return unpadded
+	}
+	return key
 }
 
 // stripPrefix only relaxes distributor labels and complete six-digit date codes.
@@ -306,6 +357,9 @@ func IsFormatEquivalent(a, b string) bool {
 		return false
 	}
 	if normA == normB {
+		return true
+	}
+	if dateVariant(normA) == normB {
 		return true
 	}
 

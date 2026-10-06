@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
-import { apiGet, apiPost } from '@/api/client'
+import { apiGet, apiPost, apiPut } from '@/api/client'
 import { offlineKeys } from '@/api/offline'
 import type { PanDirectory } from '@/api/pan'
 
@@ -18,14 +18,20 @@ type TaskBase = {
   progress: number
   error?: string
   can_retry?: boolean
+  retry_at?: string
+  retry_count?: number
   created_at: string
   updated_at: string
 }
 
 export type ScanTask = TaskBase & {
   type: 'scan'
+  movie_id?: number
+  code?: string
+  rebuild?: boolean
   source: LibrarySource
   offline_task_id?: number
+  paused?: boolean
   scan: {
     stage: 'queued' | 'scanning' | 'reconciling' | 'scraping' | 'artwork' | 'done'
     current_path: string
@@ -40,6 +46,8 @@ export type ScanTask = TaskBase & {
     removed_movies: number
     metadata_total: number
     metadata_completed: number
+    metadata_retrying?: number
+    metadata_failed?: number
   }
 }
 
@@ -81,6 +89,15 @@ export function useRetryTask() {
       ])
     },
     onError: error => toast.error('重试失败', { description: error.message })
+  })
+}
+
+export function useSetLibraryPaused() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (paused: boolean) => apiPut('/api/tasks/library-control', { paused }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: taskKeys.all }),
+    onError: error => toast.error('操作失败', { description: error.message })
   })
 }
 

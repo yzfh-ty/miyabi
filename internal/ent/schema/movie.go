@@ -1,11 +1,16 @@
 package schema
 
 import (
+	"context"
+
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
+	"entgo.io/ent/schema/index"
+	"github.com/ppxb/miyabi/internal/codeid"
 	"github.com/ppxb/miyabi/internal/domain"
+	"github.com/ppxb/miyabi/internal/nfo"
 )
 
 type Movie struct {
@@ -21,6 +26,10 @@ func (Movie) Fields() []ent.Field {
 		field.String("code").
 			NotEmpty().
 			Unique(),
+		field.String("manual_code").Default(""),
+		field.String("canonical_code").
+			Default("").
+			Comment("Candidate grouping key; equivalence must still be checked against code."),
 		field.String("javdb_id").
 			Optional().
 			Nillable().
@@ -62,11 +71,34 @@ func (Movie) Fields() []ent.Field {
 			Nillable(),
 		field.JSON("fanarts", []string{}).
 			Default(func() []string { return []string{} }),
+		field.JSON("metadata", &nfo.Movie{}).Optional(),
 		field.JSON("metadata_snapshot", &domain.MetadataSnapshot{}).Optional(),
 		field.Enum("scrape_status").
 			Values("pending", "done", "failed").
 			Default("pending"),
 	}
+}
+
+func (Movie) Indexes() []ent.Index {
+	return []ent.Index{
+		index.Fields("canonical_code"),
+		index.Fields("created_at", "id"),
+	}
+}
+
+// Keep the lookup key in the same write as code, including bulk creates and
+// metadata updates, without making each caller maintain a derived field.
+func (Movie) Hooks() []ent.Hook {
+	return []ent.Hook{func(next ent.Mutator) ent.Mutator {
+		return ent.MutateFunc(func(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+			if code, ok := m.Field("code"); ok {
+				if err := m.SetField("canonical_code", codeid.MatchKey(code.(string))); err != nil {
+					return nil, err
+				}
+			}
+			return next.Mutate(ctx, m)
+		})
+	}}
 }
 
 func (Movie) Edges() []ent.Edge {

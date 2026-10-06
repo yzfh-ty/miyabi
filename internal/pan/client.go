@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/ppxb/miyabi/internal/domain"
 	"github.com/ppxb/miyabi/internal/netx"
 	"golang.org/x/time/rate"
 )
@@ -23,9 +24,8 @@ const (
 )
 
 type Client struct {
-	http    *resty.Client
-	media   *http.Client
-	limiter *rate.Limiter
+	http  *resty.Client
+	media *http.Client
 }
 
 const (
@@ -190,9 +190,8 @@ func New() *Client {
 	mediaTransport := netx.NewTransport(nil)
 	mediaTransport.ResponseHeaderTimeout = requestTimeout
 	return &Client{
-		http:    httpClient,
-		media:   &http.Client{Transport: mediaTransport},
-		limiter: limiter,
+		http:  httpClient,
+		media: &http.Client{Transport: mediaTransport},
 	}
 }
 
@@ -210,7 +209,7 @@ func (client *Client) request(request *resty.Request, method, endpoint string) (
 		return nil, ErrUnauthorized
 	}
 	if !response.IsSuccess() {
-		return nil, fmt.Errorf("115 returned HTTP %d", response.StatusCode())
+		return nil, &domain.HTTPError{Source: "115", StatusCode: response.StatusCode(), RetryAfter: parseRetryAfter(response.Header().Get("Retry-After"))}
 	}
 	return response, nil
 }

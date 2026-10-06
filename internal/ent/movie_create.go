@@ -17,6 +17,7 @@ import (
 	"github.com/ppxb/miyabi/internal/ent/movie"
 	"github.com/ppxb/miyabi/internal/ent/subtitle"
 	"github.com/ppxb/miyabi/internal/ent/tag"
+	"github.com/ppxb/miyabi/internal/nfo"
 )
 
 // MovieCreate is the builder for creating a Movie entity.
@@ -58,6 +59,34 @@ func (_c *MovieCreate) SetNillableUpdatedAt(v *time.Time) *MovieCreate {
 // SetCode sets the "code" field.
 func (_c *MovieCreate) SetCode(v string) *MovieCreate {
 	_c.mutation.SetCode(v)
+	return _c
+}
+
+// SetManualCode sets the "manual_code" field.
+func (_c *MovieCreate) SetManualCode(v string) *MovieCreate {
+	_c.mutation.SetManualCode(v)
+	return _c
+}
+
+// SetNillableManualCode sets the "manual_code" field if the given value is not nil.
+func (_c *MovieCreate) SetNillableManualCode(v *string) *MovieCreate {
+	if v != nil {
+		_c.SetManualCode(*v)
+	}
+	return _c
+}
+
+// SetCanonicalCode sets the "canonical_code" field.
+func (_c *MovieCreate) SetCanonicalCode(v string) *MovieCreate {
+	_c.mutation.SetCanonicalCode(v)
+	return _c
+}
+
+// SetNillableCanonicalCode sets the "canonical_code" field if the given value is not nil.
+func (_c *MovieCreate) SetNillableCanonicalCode(v *string) *MovieCreate {
+	if v != nil {
+		_c.SetCanonicalCode(*v)
+	}
 	return _c
 }
 
@@ -249,6 +278,12 @@ func (_c *MovieCreate) SetFanarts(v []string) *MovieCreate {
 	return _c
 }
 
+// SetMetadata sets the "metadata" field.
+func (_c *MovieCreate) SetMetadata(v *nfo.Movie) *MovieCreate {
+	_c.mutation.SetMetadata(v)
+	return _c
+}
+
 // SetMetadataSnapshot sets the "metadata_snapshot" field.
 func (_c *MovieCreate) SetMetadataSnapshot(v *domain.MetadataSnapshot) *MovieCreate {
 	_c.mutation.SetMetadataSnapshot(v)
@@ -336,7 +371,9 @@ func (_c *MovieCreate) Mutation() *MovieMutation {
 
 // Save creates the Movie in the database.
 func (_c *MovieCreate) Save(ctx context.Context) (*Movie, error) {
-	_c.defaults()
+	if err := _c.defaults(); err != nil {
+		return nil, err
+	}
 	return withHooks(ctx, _c.sqlSave, _c.mutation, _c.hooks)
 }
 
@@ -363,20 +400,37 @@ func (_c *MovieCreate) ExecX(ctx context.Context) {
 }
 
 // defaults sets the default values of the builder before save.
-func (_c *MovieCreate) defaults() {
+func (_c *MovieCreate) defaults() error {
 	if _, ok := _c.mutation.CreatedAt(); !ok {
+		if movie.DefaultCreatedAt == nil {
+			return fmt.Errorf("ent: uninitialized movie.DefaultCreatedAt (forgotten import ent/runtime?)")
+		}
 		v := movie.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
+		if movie.DefaultUpdatedAt == nil {
+			return fmt.Errorf("ent: uninitialized movie.DefaultUpdatedAt (forgotten import ent/runtime?)")
+		}
 		v := movie.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
+	}
+	if _, ok := _c.mutation.ManualCode(); !ok {
+		v := movie.DefaultManualCode
+		_c.mutation.SetManualCode(v)
+	}
+	if _, ok := _c.mutation.CanonicalCode(); !ok {
+		v := movie.DefaultCanonicalCode
+		_c.mutation.SetCanonicalCode(v)
 	}
 	if _, ok := _c.mutation.Title(); !ok {
 		v := movie.DefaultTitle
 		_c.mutation.SetTitle(v)
 	}
 	if _, ok := _c.mutation.Fanarts(); !ok {
+		if movie.DefaultFanarts == nil {
+			return fmt.Errorf("ent: uninitialized movie.DefaultFanarts (forgotten import ent/runtime?)")
+		}
 		v := movie.DefaultFanarts()
 		_c.mutation.SetFanarts(v)
 	}
@@ -384,6 +438,7 @@ func (_c *MovieCreate) defaults() {
 		v := movie.DefaultScrapeStatus
 		_c.mutation.SetScrapeStatus(v)
 	}
+	return nil
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -401,6 +456,12 @@ func (_c *MovieCreate) check() error {
 		if err := movie.CodeValidator(v); err != nil {
 			return &ValidationError{Name: "code", err: fmt.Errorf(`ent: validator failed for field "Movie.code": %w`, err)}
 		}
+	}
+	if _, ok := _c.mutation.ManualCode(); !ok {
+		return &ValidationError{Name: "manual_code", err: errors.New(`ent: missing required field "Movie.manual_code"`)}
+	}
+	if _, ok := _c.mutation.CanonicalCode(); !ok {
+		return &ValidationError{Name: "canonical_code", err: errors.New(`ent: missing required field "Movie.canonical_code"`)}
 	}
 	if _, ok := _c.mutation.Title(); !ok {
 		return &ValidationError{Name: "title", err: errors.New(`ent: missing required field "Movie.title"`)}
@@ -454,6 +515,14 @@ func (_c *MovieCreate) createSpec() (*Movie, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Code(); ok {
 		_spec.SetField(movie.FieldCode, field.TypeString, value)
 		_node.Code = value
+	}
+	if value, ok := _c.mutation.ManualCode(); ok {
+		_spec.SetField(movie.FieldManualCode, field.TypeString, value)
+		_node.ManualCode = value
+	}
+	if value, ok := _c.mutation.CanonicalCode(); ok {
+		_spec.SetField(movie.FieldCanonicalCode, field.TypeString, value)
+		_node.CanonicalCode = value
 	}
 	if value, ok := _c.mutation.JavdbID(); ok {
 		_spec.SetField(movie.FieldJavdbID, field.TypeString, value)
@@ -510,6 +579,10 @@ func (_c *MovieCreate) createSpec() (*Movie, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Fanarts(); ok {
 		_spec.SetField(movie.FieldFanarts, field.TypeJSON, value)
 		_node.Fanarts = value
+	}
+	if value, ok := _c.mutation.Metadata(); ok {
+		_spec.SetField(movie.FieldMetadata, field.TypeJSON, value)
+		_node.Metadata = value
 	}
 	if value, ok := _c.mutation.MetadataSnapshot(); ok {
 		_spec.SetField(movie.FieldMetadataSnapshot, field.TypeJSON, value)
@@ -656,6 +729,30 @@ func (u *MovieUpsert) SetCode(v string) *MovieUpsert {
 // UpdateCode sets the "code" field to the value that was provided on create.
 func (u *MovieUpsert) UpdateCode() *MovieUpsert {
 	u.SetExcluded(movie.FieldCode)
+	return u
+}
+
+// SetManualCode sets the "manual_code" field.
+func (u *MovieUpsert) SetManualCode(v string) *MovieUpsert {
+	u.Set(movie.FieldManualCode, v)
+	return u
+}
+
+// UpdateManualCode sets the "manual_code" field to the value that was provided on create.
+func (u *MovieUpsert) UpdateManualCode() *MovieUpsert {
+	u.SetExcluded(movie.FieldManualCode)
+	return u
+}
+
+// SetCanonicalCode sets the "canonical_code" field.
+func (u *MovieUpsert) SetCanonicalCode(v string) *MovieUpsert {
+	u.Set(movie.FieldCanonicalCode, v)
+	return u
+}
+
+// UpdateCanonicalCode sets the "canonical_code" field to the value that was provided on create.
+func (u *MovieUpsert) UpdateCanonicalCode() *MovieUpsert {
+	u.SetExcluded(movie.FieldCanonicalCode)
 	return u
 }
 
@@ -911,6 +1008,24 @@ func (u *MovieUpsert) UpdateFanarts() *MovieUpsert {
 	return u
 }
 
+// SetMetadata sets the "metadata" field.
+func (u *MovieUpsert) SetMetadata(v *nfo.Movie) *MovieUpsert {
+	u.Set(movie.FieldMetadata, v)
+	return u
+}
+
+// UpdateMetadata sets the "metadata" field to the value that was provided on create.
+func (u *MovieUpsert) UpdateMetadata() *MovieUpsert {
+	u.SetExcluded(movie.FieldMetadata)
+	return u
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (u *MovieUpsert) ClearMetadata() *MovieUpsert {
+	u.SetNull(movie.FieldMetadata)
+	return u
+}
+
 // SetMetadataSnapshot sets the "metadata_snapshot" field.
 func (u *MovieUpsert) SetMetadataSnapshot(v *domain.MetadataSnapshot) *MovieUpsert {
 	u.Set(movie.FieldMetadataSnapshot, v)
@@ -1011,6 +1126,34 @@ func (u *MovieUpsertOne) SetCode(v string) *MovieUpsertOne {
 func (u *MovieUpsertOne) UpdateCode() *MovieUpsertOne {
 	return u.Update(func(s *MovieUpsert) {
 		s.UpdateCode()
+	})
+}
+
+// SetManualCode sets the "manual_code" field.
+func (u *MovieUpsertOne) SetManualCode(v string) *MovieUpsertOne {
+	return u.Update(func(s *MovieUpsert) {
+		s.SetManualCode(v)
+	})
+}
+
+// UpdateManualCode sets the "manual_code" field to the value that was provided on create.
+func (u *MovieUpsertOne) UpdateManualCode() *MovieUpsertOne {
+	return u.Update(func(s *MovieUpsert) {
+		s.UpdateManualCode()
+	})
+}
+
+// SetCanonicalCode sets the "canonical_code" field.
+func (u *MovieUpsertOne) SetCanonicalCode(v string) *MovieUpsertOne {
+	return u.Update(func(s *MovieUpsert) {
+		s.SetCanonicalCode(v)
+	})
+}
+
+// UpdateCanonicalCode sets the "canonical_code" field to the value that was provided on create.
+func (u *MovieUpsertOne) UpdateCanonicalCode() *MovieUpsertOne {
+	return u.Update(func(s *MovieUpsert) {
+		s.UpdateCanonicalCode()
 	})
 }
 
@@ -1308,6 +1451,27 @@ func (u *MovieUpsertOne) UpdateFanarts() *MovieUpsertOne {
 	})
 }
 
+// SetMetadata sets the "metadata" field.
+func (u *MovieUpsertOne) SetMetadata(v *nfo.Movie) *MovieUpsertOne {
+	return u.Update(func(s *MovieUpsert) {
+		s.SetMetadata(v)
+	})
+}
+
+// UpdateMetadata sets the "metadata" field to the value that was provided on create.
+func (u *MovieUpsertOne) UpdateMetadata() *MovieUpsertOne {
+	return u.Update(func(s *MovieUpsert) {
+		s.UpdateMetadata()
+	})
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (u *MovieUpsertOne) ClearMetadata() *MovieUpsertOne {
+	return u.Update(func(s *MovieUpsert) {
+		s.ClearMetadata()
+	})
+}
+
 // SetMetadataSnapshot sets the "metadata_snapshot" field.
 func (u *MovieUpsertOne) SetMetadataSnapshot(v *domain.MetadataSnapshot) *MovieUpsertOne {
 	return u.Update(func(s *MovieUpsert) {
@@ -1579,6 +1743,34 @@ func (u *MovieUpsertBulk) SetCode(v string) *MovieUpsertBulk {
 func (u *MovieUpsertBulk) UpdateCode() *MovieUpsertBulk {
 	return u.Update(func(s *MovieUpsert) {
 		s.UpdateCode()
+	})
+}
+
+// SetManualCode sets the "manual_code" field.
+func (u *MovieUpsertBulk) SetManualCode(v string) *MovieUpsertBulk {
+	return u.Update(func(s *MovieUpsert) {
+		s.SetManualCode(v)
+	})
+}
+
+// UpdateManualCode sets the "manual_code" field to the value that was provided on create.
+func (u *MovieUpsertBulk) UpdateManualCode() *MovieUpsertBulk {
+	return u.Update(func(s *MovieUpsert) {
+		s.UpdateManualCode()
+	})
+}
+
+// SetCanonicalCode sets the "canonical_code" field.
+func (u *MovieUpsertBulk) SetCanonicalCode(v string) *MovieUpsertBulk {
+	return u.Update(func(s *MovieUpsert) {
+		s.SetCanonicalCode(v)
+	})
+}
+
+// UpdateCanonicalCode sets the "canonical_code" field to the value that was provided on create.
+func (u *MovieUpsertBulk) UpdateCanonicalCode() *MovieUpsertBulk {
+	return u.Update(func(s *MovieUpsert) {
+		s.UpdateCanonicalCode()
 	})
 }
 
@@ -1873,6 +2065,27 @@ func (u *MovieUpsertBulk) SetFanarts(v []string) *MovieUpsertBulk {
 func (u *MovieUpsertBulk) UpdateFanarts() *MovieUpsertBulk {
 	return u.Update(func(s *MovieUpsert) {
 		s.UpdateFanarts()
+	})
+}
+
+// SetMetadata sets the "metadata" field.
+func (u *MovieUpsertBulk) SetMetadata(v *nfo.Movie) *MovieUpsertBulk {
+	return u.Update(func(s *MovieUpsert) {
+		s.SetMetadata(v)
+	})
+}
+
+// UpdateMetadata sets the "metadata" field to the value that was provided on create.
+func (u *MovieUpsertBulk) UpdateMetadata() *MovieUpsertBulk {
+	return u.Update(func(s *MovieUpsert) {
+		s.UpdateMetadata()
+	})
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (u *MovieUpsertBulk) ClearMetadata() *MovieUpsertBulk {
+	return u.Update(func(s *MovieUpsert) {
+		s.ClearMetadata()
 	})
 }
 

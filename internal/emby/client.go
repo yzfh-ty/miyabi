@@ -84,10 +84,6 @@ func (c *embyClient) notify(ctx context.Context, cfg Config, updates []mediaUpda
 	return c.request(ctx, cfg, http.MethodPost, "/Library/Media/Updated", bytes.NewReader(body), "application/json", nil)
 }
 
-func (c *embyClient) refresh(ctx context.Context, cfg Config) error {
-	return c.request(ctx, cfg, http.MethodPost, "/Library/Refresh", nil, "", nil)
-}
-
 type personItem struct {
 	Name            string            `json:"Name"`
 	ID              string            `json:"Id"`
@@ -95,20 +91,40 @@ type personItem struct {
 	ImageTags       map[string]string `json:"ImageTags,omitempty"`
 }
 
-func (c *embyClient) personsWithoutAvatar(ctx context.Context, cfg Config) ([]personItem, error) {
+func (c *embyClient) persons(ctx context.Context, cfg Config) ([]personItem, error) {
 	var result struct {
 		Items []personItem `json:"Items"`
 	}
 	if err := c.request(ctx, cfg, http.MethodGet, "/Persons", nil, "", &result); err != nil {
 		return nil, err
 	}
-	var missing []personItem
+	var people []personItem
 	for _, person := range result.Items {
-		if person.ID != "" && strings.TrimSpace(person.Name) != "" && person.PrimaryImageTag == "" && person.ImageTags["Primary"] == "" {
-			missing = append(missing, person)
+		if person.ID != "" && strings.TrimSpace(person.Name) != "" {
+			people = append(people, person)
 		}
 	}
-	return missing, nil
+	return people, nil
+}
+
+func (c *embyClient) hasValidAvatar(ctx context.Context, cfg Config, person personItem) (bool, error) {
+	if person.PrimaryImageTag == "" && person.ImageTags["Primary"] == "" {
+		return false, nil
+	}
+	var images []struct {
+		Type   string `json:"ImageType"`
+		Width  int    `json:"Width"`
+		Height int    `json:"Height"`
+	}
+	if err := c.request(ctx, cfg, http.MethodGet, "/Items/"+url.PathEscape(person.ID)+"/Images", nil, "", &images); err != nil {
+		return false, err
+	}
+	for _, image := range images {
+		if image.Type == "Primary" && image.Width > 0 && image.Height > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (c *embyClient) uploadAvatar(ctx context.Context, cfg Config, personID string, image domain.Media) error {

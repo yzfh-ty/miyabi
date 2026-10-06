@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ppxb/miyabi/internal/catalogue"
 	"github.com/ppxb/miyabi/internal/database"
@@ -32,6 +33,69 @@ import (
 	"github.com/ppxb/miyabi/internal/pan"
 	"github.com/ppxb/miyabi/internal/tasks"
 )
+
+func TestRepeatedScanReusesActiveWorkAndPreservesCompleteExports(t *testing.T) {
+	f := newPipelineFixture(t)
+	ctx := t.Context()
+	f.library = library.New(f.store.Client, f.driveService, f.tasks, f.images, library.Options{
+		Pacing:        func(context.Context) error { return nil },
+		ExportManager: export.NewManager(export.Config{EmbyDir: f.embyDir, PublicURL: "http://127.0.0.1:8080"}),
+	})
+	f.drive.addFile("101", "10", "ABP-123.mp4", 2<<30, []byte("video"))
+	f.addCatalogueMovie(fixtureDetail())
+	for range 2 {
+		if _, err := f.library.StartScan(ctx); err != nil {
+			t.Fatal(err)
+		}
+		job, err := f.tasks.Queue().Claim(ctx, []tasks.Kind{tasks.KindScan})
+		if err != nil || job == nil {
+			t.Fatalf("scan claim: %+v %v", job, err)
+		}
+		if err := f.library.Scan(ctx, *job); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.tasks.Queue().Finish(ctx, job.ID, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.tasksOfType(t, "scrape")) != 1 {
+		t.Fatal("overlapping scans duplicated scraping")
+	}
+	infos, err := f.library.ListTasks(ctx)
+	if err != nil || len(infos) != 2 {
+		t.Fatalf("workflows: %+v %v", infos, err)
+	}
+	for _, info := range infos {
+		if info.Status != "queued" || info.Scan.MetadataTotal != 1 {
+			t.Fatalf("shared work not tracked: %+v", info)
+		}
+	}
+	f.runQueue(t)
+	before := maps.Clone(f.catalogue.calls)
+	stamp := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	dir := scrapePkg.EmbyMovieDir(f.embyDir, "ABP-123")
+	files := []string{"ABP-123.nfo", "ABP-123.strm", "poster.jpg", "fanart.jpg"}
+	for _, name := range files {
+		if err := os.Chtimes(filepath.Join(dir, name), stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.library.StartScan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if executed := f.runQueue(t); len(executed) != 1 || executed[0].Type != tasks.KindScan {
+		t.Fatalf("unchanged scan started work: %+v", executed)
+	}
+	if !maps.Equal(before, f.catalogue.calls) {
+		t.Fatal("unchanged scan requested metadata or images")
+	}
+	for _, name := range files {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil || !info.ModTime().Equal(stamp) {
+			t.Fatalf("unchanged file rewritten: %s %v", name, err)
+		}
+	}
+}
 
 // fakeDrive is an in-memory 115 account: a directory tree, file contents keyed
 // by pick code, and a record of metadata reads in call order.
@@ -225,14 +289,6 @@ func (catalogue *fakeCatalogue) ResolveMovieID(_ context.Context, code string) (
 
 func (catalogue *fakeCatalogue) Route() (javdb.RouteStatus, bool) { return javdb.RouteStatus{}, false }
 
-func (catalogue *fakeCatalogue) SelectRoute(context.Context, string) (javdb.RouteStatus, error) {
-	return javdb.RouteStatus{}, fmt.Errorf("route selection is not part of this fixture")
-}
-
-func (catalogue *fakeCatalogue) Reselect(context.Context) (javdb.RouteStatus, error) {
-	return javdb.RouteStatus{}, fmt.Errorf("route selection is not part of this fixture")
-}
-
 func fixtureJPEG(t testing.TB, width, height int) []byte {
 	t.Helper()
 	var body bytes.Buffer
@@ -255,13 +311,15 @@ type pipelineFixture struct {
 	discover     *catalogue.Service
 	images       *mediaimage.Cache
 	source       domain.LibrarySource
+	dataDir      string
 	embyDir      string
 }
 
 func newPipelineFixture(t *testing.T) *pipelineFixture {
 	t.Helper()
 	ctx := t.Context()
-	store, err := database.Open(ctx, t.TempDir())
+	dataDir := t.TempDir()
+	store, err := database.Open(ctx, dataDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,16 +346,15 @@ func newPipelineFixture(t *testing.T) *pipelineFixture {
 		t.Fatal(err)
 	}
 	embyDir := t.TempDir()
-	scrape := scrapePkg.New(store.Client, d, discover, images, taskSvc, scrapePkg.Dependencies{
+	scrape := scrapePkg.New(store.Client, d, fixtureMetadata{discover}, images, taskSvc, scrapePkg.Dependencies{
 		ExportManager: export.NewManager(export.Config{EmbyDir: embyDir, PublicURL: "http://127.0.0.1:8080"}),
 	})
 	taskSvc.Registry().Register(tasks.NewHandler(tasks.KindScan, library.Scan, library.Finished))
 	taskSvc.Registry().Register(tasks.NewHandler(tasks.KindScrape, scrape.Scrape, scrape.Finished))
-	taskSvc.Registry().Register(tasks.NewHandler(tasks.KindCover, scrape.Cover, scrape.Finished))
 	return &pipelineFixture{
 		store: store, drive: drive, driveService: d, catalogue: catalogueClient, tasks: taskSvc,
 		library: library, discover: discover, scrape: scrape, images: images, source: source,
-		embyDir: embyDir,
+		dataDir: dataDir, embyDir: embyDir,
 	}
 }
 
@@ -312,9 +369,9 @@ func (fixture *pipelineFixture) runQueue(t *testing.T) []tasks.Job {
 	t.Helper()
 	ctx := t.Context()
 	handlers := map[tasks.Kind]func(context.Context, tasks.Job) error{
-		tasks.KindScan: fixture.library.Scan, tasks.KindScrape: fixture.scrape.Scrape, tasks.KindCover: fixture.scrape.Cover,
+		tasks.KindScan: fixture.library.Scan, tasks.KindScrape: fixture.scrape.Scrape,
 	}
-	types := []tasks.Kind{tasks.KindCover, tasks.KindScan, tasks.KindScrape}
+	types := []tasks.Kind{tasks.KindScan, tasks.KindScrape}
 	var executed []tasks.Job
 	for range 20 {
 		job, err := fixture.tasks.Queue().Claim(ctx, types)
@@ -376,7 +433,7 @@ func TestPipelineScansScrapesAndWritesSidecarsEndToEnd(t *testing.T) {
 	for index, job := range executed {
 		kinds[index] = string(job.Type)
 	}
-	if !slices.Equal(kinds, []string{"scan", "scrape", "cover"}) {
+	if !slices.Equal(kinds, []string{"scan", "scrape"}) {
 		t.Fatalf("executed task chain = %v", kinds)
 	}
 	for _, kind := range kinds {
@@ -431,7 +488,7 @@ func TestPipelineScansScrapesAndWritesSidecarsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.Code != "ABP-123" || doc.JavDBID() != "movie-exact" || doc.Title != "Localized title" || doc.Premiered != "2026-08-01" {
+	if doc.Code != "ABP-123" || doc.JavDBID() != "movie-exact" || doc.Title != "Localized title" || doc.Premiered != "2026-08-01" || doc.Zone != domain.ZoneCensored {
 		t.Fatalf("nfo = %+v", doc)
 	}
 	if doc.Poster() != "poster.jpg" || doc.Fanart != "fanart.jpg" || len(doc.Actors) != 2 || len(doc.Tags) != 1 || doc.Studio.Name != "Maker" {
@@ -459,6 +516,15 @@ func TestPipelineScansScrapesAndWritesSidecarsEndToEnd(t *testing.T) {
 	page, err := fixture.library.Movies(ctx, 1, 20)
 	if err != nil || page.Total != 1 || len(page.Movies) != 1 || page.Movies[0].Fanart != artwork.Fanart || page.Movies[0].ScrapeStatus != movie.ScrapeStatusDone {
 		t.Fatalf("library page = %+v, %v", page, err)
+	}
+	beforeDetail := maps.Clone(fixture.catalogue.calls)
+	detail, err := fixture.library.Movie(ctx, record.ID)
+	if err != nil || detail.Title != doc.Title || detail.ID != doc.JavDBID() || detail.Zone != doc.Zone ||
+		detail.Cover != artwork.Fanart || detail.ScrapeStatus != movie.ScrapeStatusDone || len(detail.Actors) != len(doc.Actors) {
+		t.Fatalf("saved library detail = %+v, %v", detail, err)
+	}
+	if !maps.Equal(fixture.catalogue.calls, beforeDetail) {
+		t.Fatalf("saved detail contacted the catalogue: %v", fixture.catalogue.calls)
 	}
 
 	if snapshot := record.MetadataSnapshot; snapshot == nil || snapshot.Videos != scrapePkg.VideoFingerprint([]pan.File{video}) ||
@@ -507,7 +573,7 @@ func TestPipelineUsesNFOCodeButScrapesCatalogueMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture.runQueue(t)
-	for _, kind := range []string{"scan", "scrape", "cover"} {
+	for _, kind := range []string{"scan", "scrape"} {
 		for _, record := range fixture.tasksOfType(t, kind) {
 			if record.Status != task.StatusDone {
 				t.Fatalf("%s task %d = %s: %v", kind, record.ID, record.Status, domain.ValueOrZero(record.Error))
@@ -566,9 +632,6 @@ func TestPipelineMarksMovieFailedWhenCatalogueLacksIt(t *testing.T) {
 	if err != nil || record.ScrapeStatus != movie.ScrapeStatusFailed {
 		t.Fatalf("movie = %+v, %v", record, err)
 	}
-	if covers := fixture.tasksOfType(t, "cover"); len(covers) != 0 {
-		t.Fatalf("failed scrape queued artwork: %v", covers)
-	}
 	infos, err := fixture.library.ListTasks(ctx)
 	if err != nil || len(infos) != 1 || infos[0].Status != string(task.StatusFailed) || infos[0].Error == nil {
 		t.Fatalf("scan workflow = %+v, %v", infos, err)
@@ -582,7 +645,7 @@ func TestPipelineMarksMovieFailedWhenCatalogueLacksIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	retried := fixture.runQueue(t)
-	if len(retried) != 2 || retried[0].ID != scrapes[0].ID || retried[0].Type != tasks.KindScrape || retried[1].Type != tasks.KindCover {
+	if len(retried) != 1 || retried[0].ID != scrapes[0].ID || retried[0].Type != tasks.KindScrape {
 		t.Fatalf("retry replayed completed work: %+v", retried)
 	}
 	infos, err = fixture.library.ListTasks(ctx)
@@ -644,4 +707,37 @@ func TestPipelineRemovesMovieWhenDeletedFrom115(t *testing.T) {
 	if movieCount, err := fixture.store.Client.Movie.Query().Count(ctx); err != nil || movieCount != 0 {
 		t.Fatalf("movies in db = %d, error = %v", movieCount, err)
 	}
+}
+
+// fixtureMetadata isolates workflow recovery tests from source matching tests.
+type fixtureMetadata struct{ catalogue *catalogue.Service }
+
+func (f fixtureMetadata) Resolve(ctx context.Context, ref domain.MovieRef) (domain.MovieMetadata, error) {
+	id := ref.JavDBID
+	var err error
+	if id == "" {
+		id, err = f.catalogue.ResolveMovieID(ctx, ref.Code)
+		if err != nil {
+			return domain.MovieMetadata{}, err
+		}
+	}
+	detail, err := f.catalogue.CatalogueDetail(ctx, id)
+	if err != nil {
+		return domain.MovieMetadata{}, err
+	}
+	detail.Sources = []domain.SourceID{{Provider: "javdb", ID: id}}
+	for i := range detail.Actors {
+		detail.Actors[i].Provider = "javdb"
+	}
+	for i := range detail.Tags {
+		detail.Tags[i].Provider = "javdb"
+	}
+	return domain.MovieMetadata{Detail: detail, Images: []domain.ImageCandidate{{Provider: "javdb", URL: detail.Cover, Role: "cover"}}}, nil
+}
+func (f fixtureMetadata) Image(ctx context.Context, image domain.ImageCandidate) (domain.Media, error) {
+	return f.catalogue.Media(ctx, image.URL)
+}
+
+func (f fixtureMetadata) Fallback(ctx context.Context, ref domain.MovieRef) (domain.MovieMetadata, error) {
+	return f.Resolve(ctx, ref)
 }

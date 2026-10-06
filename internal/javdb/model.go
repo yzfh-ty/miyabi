@@ -22,7 +22,6 @@ const (
 type Options struct {
 	CachedHost    string
 	CachedLatency time.Duration
-	ManualRoute   bool
 	DeviceUUID    string
 	Proxy         *netx.ProxyManager
 	Timeout       time.Duration
@@ -32,7 +31,6 @@ type Options struct {
 type RouteStatus struct {
 	Host       string
 	Latency    time.Duration
-	Manual     bool
 	Candidates []RouteCandidate
 }
 
@@ -89,6 +87,11 @@ func (e *HTTPError) Error() string {
 }
 
 func (e *HTTPError) DomainKind() domain.Kind { return domain.KindUpstream }
+
+func (e *HTTPError) Retryable() bool {
+	return (&domain.HTTPError{StatusCode: e.StatusCode}).Retryable()
+}
+func (e *HTTPError) RetryWait() time.Duration { return e.RetryAfter }
 
 func (e *HTTPError) PublicMessage() string {
 	if e.StatusCode == 429 {
