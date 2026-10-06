@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ppxb/miyabi/internal/database"
@@ -20,6 +20,7 @@ import (
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/export"
 	"github.com/ppxb/miyabi/internal/pan"
+	"github.com/ppxb/miyabi/internal/syncx"
 )
 
 const (
@@ -49,6 +50,7 @@ type Config struct {
 	FilesGenerated     int                     `json:"files_generated"`
 	FilesSkipped       int                     `json:"files_skipped"`
 	Errors             []string                `json:"errors,omitempty"`
+	Running            bool                    `json:"running"`
 }
 
 type Update struct {
@@ -65,11 +67,21 @@ type Service struct {
 	exportMgr *export.Manager
 	notifier  export.MediaNotifier
 	log       *slog.Logger
-	mu        sync.Mutex
+	mu        syncx.ContextLock
+	ctx       context.Context
+	cancel    context.CancelFunc
+	running   atomic.Bool
 }
 
 func New(db *ent.Client, d *drive.Drive, exportMgr *export.Manager, notifier export.MediaNotifier, logger *slog.Logger) *Service {
-	return &Service{db: db, drive: d, exportMgr: exportMgr, notifier: notifier, log: logger}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Service{db: db, drive: d, exportMgr: exportMgr, notifier: notifier, log: logger, ctx: ctx, cancel: cancel}
+}
+
+func (s *Service) Close() {
+	s.cancel()
+	_ = s.mu.Lock(context.Background())
+	s.mu.Unlock()
 }
 
 type syncResult struct {
@@ -80,6 +92,7 @@ type syncResult struct {
 }
 
 func (s *Service) Config(ctx context.Context) (Config, error) {
+	wasRunning := s.running.Load()
 	config, _, err := database.LoadSetting[Config](ctx, s.db, configKey)
 	if err != nil {
 		return Config{}, err
@@ -94,6 +107,8 @@ func (s *Service) Config(ctx context.Context) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	// If completion overlapped the database read, poll once more for its result.
+	config.Running = wasRunning || s.running.Load()
 	return config, nil
 }
 
@@ -116,7 +131,9 @@ func (s *Service) destination(override string) (string, error) {
 }
 
 func (s *Service) Update(ctx context.Context, input Update) (Config, error) {
-	s.mu.Lock()
+	if !s.mu.TryLock() {
+		return Config{}, domain.E(domain.KindBusy, "同步正在进行，请完成后再修改配置", nil)
+	}
 	defer s.mu.Unlock()
 	if input.IntervalMinutes < 1 || input.IntervalMinutes > 1440 {
 		return Config{}, domain.E(domain.KindInvalid, "同步间隔须在 1 到 1440 分钟之间", nil)
@@ -199,7 +216,9 @@ func (s *Service) Update(ctx context.Context, input Update) (Config, error) {
 }
 
 func (s *Service) Tick(ctx context.Context) error {
-	s.mu.Lock()
+	if err := s.mu.Lock(ctx); err != nil {
+		return err
+	}
 	defer s.mu.Unlock()
 	config, err := s.Config(ctx)
 	if err != nil || !config.Enabled {
@@ -208,16 +227,63 @@ func (s *Service) Tick(ctx context.Context) error {
 	if config.LastRunAt != nil && time.Since(*config.LastRunAt) < time.Duration(config.IntervalMinutes)*time.Minute {
 		return nil
 	}
-	return s.syncLocked(ctx, config)
+	return s.runSync(ctx, config)
 }
 
 func (s *Service) Sync(ctx context.Context) error {
-	s.mu.Lock()
+	if err := s.mu.Lock(ctx); err != nil {
+		return err
+	}
 	defer s.mu.Unlock()
 	config, err := s.Config(ctx)
 	if err != nil {
 		return err
 	}
+	return s.runSync(ctx, config)
+}
+
+// Start acknowledges the run without keeping the request alive. Repeated
+// submissions observe the active run instead of starting duplicate work.
+func (s *Service) Start(ctx context.Context) (Config, error) {
+	if !s.mu.TryLock() {
+		if s.running.Load() {
+			return s.Config(ctx)
+		}
+		return Config{}, domain.E(domain.KindBusy, "同步配置正在更新，请稍后重试", nil)
+	}
+	config, err := s.Config(ctx)
+	if err == nil && !config.Enabled {
+		err = domain.E(domain.KindInvalid, "请先启用 STRM 与元数据同步", nil)
+	}
+	if err == nil {
+		err = s.ctx.Err()
+	}
+	if err != nil {
+		s.mu.Unlock()
+		return Config{}, err
+	}
+	s.running.Store(true)
+	go func(config Config) {
+		// This run owns the gate until its final result has been saved.
+		defer s.mu.Unlock()
+		if err := s.runSync(s.ctx, config); err != nil && !errors.Is(err, context.Canceled) && s.log != nil {
+			s.log.Warn("115 background sidecar sync failed", "error", err)
+		}
+	}(config)
+	config.Running = true
+	return config, nil
+}
+
+func (s *Service) runSync(ctx context.Context, config Config) error {
+	if !config.Enabled {
+		return nil
+	}
+	s.running.Store(true)
+	defer s.running.Store(false)
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(s.ctx, cancel)
+	defer stop()
+	defer cancel()
 	return s.syncLocked(ctx, config)
 }
 

@@ -120,7 +120,8 @@ export function PanSidecarSync({ accountID, parent }: { accountID: string; paren
     )
   }
 
-  const busy = config.isLoading || update.isPending || run.isPending
+  const running = config.data?.running === true
+  const busy = config.isLoading || update.isPending || run.isPending || running
 
   return (
     <div className="space-y-4 rounded-md border p-4">
@@ -259,14 +260,18 @@ export function PanSidecarSync({ accountID, parent }: { accountID: string; paren
           variant="outline"
           size="sm"
           disabled={busy || isDirty || !config.data?.enabled}
-          onClick={() => run.mutate()}
+          onClick={() =>
+            run.mutate(undefined, {
+              onSuccess: () => toast.success('后台同步已启动')
+            })
+          }
         >
-          {run.isPending ? (
+          {run.isPending || running ? (
             <LoaderCircleIcon className="mr-1.5 size-3.5 animate-spin" />
           ) : (
             <CloudDownloadIcon className="mr-1.5 size-3.5" />
           )}
-          立即同步
+          {running ? '同步中' : '立即同步'}
         </Button>
         <Button type="button" size="sm" disabled={busy || !isDirty} onClick={save}>
           {update.isPending ? <LoaderCircleIcon className="mr-1.5 size-3.5 animate-spin" /> : null}
@@ -300,21 +305,29 @@ export function PanSidecarSync({ accountID, parent }: { accountID: string; paren
           </Button>
         </div>
       ) : null}
-      {config.data?.last_result && config.data.last_result !== 'success' ? (
+      {running ? (
+        <p className="text-sm text-muted-foreground">
+          同步正在后台进行，可以离开此页面；完成后会更新同步结果。
+        </p>
+      ) : null}
+      {!running && config.data?.last_result && config.data.last_result !== 'success' ? (
         <InlineError>最近同步有文件处理失败：{config.data.last_result}</InlineError>
       ) : null}
-      {config.data?.errors?.slice(0, 3).map((error, index) => (
-        <div key={`${index}-${error}`} className="text-xs text-destructive">
-          {error}
-        </div>
-      ))}
+      {!running &&
+        config.data?.errors?.slice(0, 3).map((error, index) => (
+          <div key={`${index}-${error}`} className="text-xs text-destructive">
+            {error}
+          </div>
+        ))}
       {config.isError ? (
         <InlineError>无法读取同步配置：{describeApiError(config.error)}</InlineError>
       ) : null}
       {update.isError ? (
         <InlineError>同步配置保存失败：{describeApiError(update.error)}</InlineError>
       ) : null}
-      {run.isError ? <InlineError>同步未完成：{describeApiError(run.error)}</InlineError> : null}
+      {run.isError ? (
+        <InlineError>同步启动请求未确认：{describeApiError(run.error)}</InlineError>
+      ) : null}
     </div>
   )
 }

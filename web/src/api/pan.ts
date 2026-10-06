@@ -1,4 +1,5 @@
 import {
+  mutationOptions,
   queryOptions,
   useMutation,
   useQuery,
@@ -68,6 +69,7 @@ export type PanSidecarSyncConfig = {
   files_generated: number
   files_skipped: number
   errors?: string[]
+  running?: boolean
 }
 
 export type PanSidecarSyncUpdate = Pick<
@@ -95,13 +97,18 @@ export const panKeys = {
     ['pan', 'files', accountID, directoryID, page] as const
 }
 
-export function usePanSidecarSyncConfig() {
-  return useQuery({
+export function panSidecarSyncOptions() {
+  return queryOptions({
     queryKey: panKeys.sidecarSync,
     queryFn: ({ signal }) =>
       apiGet<PanSidecarSyncConfig>('/api/pan/sidecar-sync', undefined, signal),
-    refetchOnMount: 'always'
+    refetchOnMount: 'always',
+    refetchInterval: query => (query.state.data?.running ? 2000 : false)
   })
+}
+
+export function usePanSidecarSyncConfig() {
+  return useQuery(panSidecarSyncOptions())
 }
 
 export function useUpdatePanSidecarSync() {
@@ -113,13 +120,16 @@ export function useUpdatePanSidecarSync() {
   })
 }
 
-export function useRunPanSidecarSync() {
-  const queryClient = useQueryClient()
-  return useMutation({
+export function runPanSidecarSyncOptions(queryClient: QueryClient) {
+  return mutationOptions({
     mutationFn: () => apiPost<PanSidecarSyncConfig>('/api/pan/sidecar-sync/run'),
     onSuccess: config => queryClient.setQueryData(panKeys.sidecarSync, config),
     onError: () => void queryClient.invalidateQueries({ queryKey: panKeys.sidecarSync })
   })
+}
+
+export function useRunPanSidecarSync() {
+  return useMutation(runPanSidecarSyncOptions(useQueryClient()))
 }
 
 export function invalidatePanSource(queryClient: QueryClient) {

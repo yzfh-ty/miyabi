@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ppxb/miyabi/internal/sidecarsync"
@@ -10,7 +11,7 @@ import (
 type SidecarSyncManager interface {
 	Config(context.Context) (sidecarsync.Config, error)
 	Update(context.Context, sidecarsync.Update) (sidecarsync.Config, error)
-	Sync(context.Context) error
+	Start(context.Context) (sidecarsync.Config, error)
 }
 
 func sidecarSyncConfigHandler(service SidecarSyncManager) gin.HandlerFunc {
@@ -33,11 +34,11 @@ func sidecarSyncUpdateHandler(service SidecarSyncManager) gin.HandlerFunc {
 
 func sidecarSyncNowHandler(service SidecarSyncManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		err := service.Sync(c.Request.Context())
-		config, configErr := service.Config(c.Request.Context())
-		if err == nil {
-			err = configErr
+		config, err := service.Start(c.Request.Context())
+		if err != nil {
+			c.Error(err)
+			return
 		}
-		respond(c, config, err)
+		c.JSON(http.StatusAccepted, config)
 	}
 }

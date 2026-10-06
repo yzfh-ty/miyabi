@@ -285,6 +285,7 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	cancel()
+	a.sidecars.Close()
 	shutdownContext, stop := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stop()
 	if err := a.server.Shutdown(shutdownContext); err != nil {
@@ -297,6 +298,9 @@ func (a *App) Run(ctx context.Context) error {
 
 // Close releases resources held by the application.
 func (a *App) Close() error {
+	if a.sidecars != nil {
+		a.sidecars.Close()
+	}
 	if a.embySvc != nil {
 		a.embySvc.Close()
 	}

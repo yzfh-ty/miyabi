@@ -44,6 +44,9 @@ export function TaskEventsProvider({ children }: PropsWithChildren) {
     let revisions: TaskRevisions | undefined
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     let connectionTimer: ReturnType<typeof setTimeout> | undefined
+    let diagnosticController: AbortController | undefined
+    let diagnosticTimer: ReturnType<typeof setTimeout> | undefined
+    let restarting = false
     let libraryChanged = false
     let offlineChanged = false
     let monitorChanged = false
@@ -60,29 +63,33 @@ export function TaskEventsProvider({ children }: PropsWithChildren) {
     }
 
     async function restartConnection() {
+      if (disposed || restarting) return
+      restarting = true
       events.close()
       clearTimeout(connectionTimer)
       clearTimeout(retryTimer)
       markDisconnected()
 
       try {
-        const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), 5000)
-        const response = await fetch('/api/tasks/events', {
-          signal: controller.signal,
+        diagnosticController = new AbortController()
+        diagnosticTimer = setTimeout(() => diagnosticController?.abort(), 5000)
+        // Authentication checks must use a finite response, not a second SSE stream.
+        const response = await fetch('/api/tasks', {
+          signal: diagnosticController.signal,
           credentials: 'same-origin'
         })
-        clearTimeout(timer)
         if (response.status === 401) {
           const payload = (await response.json().catch(() => null)) as { code?: string } | null
-          if (!payload?.code || payload.code === 'UNAUTHORIZED') {
+          if (!disposed && (!payload?.code || payload.code === 'UNAUTHORIZED')) {
             notifyUnauthorized()
             return
           }
         }
-        controller.abort()
       } catch {
         // Network error, abort, or offline falls through to reconnect retry
+      } finally {
+        clearTimeout(diagnosticTimer)
+        diagnosticController?.abort()
       }
 
       if (!disposed) {
@@ -164,6 +171,8 @@ export function TaskEventsProvider({ children }: PropsWithChildren) {
       events.close()
       clearTimeout(retryTimer)
       clearTimeout(connectionTimer)
+      clearTimeout(diagnosticTimer)
+      diagnosticController?.abort()
     }
   }, [queryClient, attempt])
 
