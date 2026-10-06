@@ -5,19 +5,25 @@ import (
 	"strings"
 
 	"github.com/ppxb/miyabi/internal/domain"
+	"github.com/ppxb/miyabi/internal/embyproxy"
 )
 
 const SettingKey = "emby.config"
 
 // Config represents Emby integration settings.
 type Config struct {
-	Enabled    bool   `json:"enabled"`
-	ServerURL  string `json:"server_url"`
-	APIKey     string `json:"api_key"`
-	MediaPath  string `json:"media_path"`
-	LocalDir   string `json:"local_dir"`
-	SyncActors *bool  `json:"sync_actors,omitempty"`
-	PublicURL  string `json:"public_url,omitempty"`
+	Enabled        bool   `json:"enabled"`
+	ServerURL      string `json:"server_url"`
+	APIKey         string `json:"api_key"`
+	MediaPath      string `json:"media_path"`
+	LocalDir       string `json:"local_dir"`
+	SyncActors     *bool  `json:"sync_actors,omitempty"`
+	PublicURL      string `json:"public_url,omitempty"`
+	ProxyEnabled   bool   `json:"proxy_enabled"`
+	ProxyListen    string `json:"proxy_listen"`
+	ProxyPublicURL string `json:"proxy_public_url,omitempty"`
+	ProxyRunning   bool   `json:"proxy_running,omitempty"`
+	ProxyError     string `json:"proxy_error,omitempty"`
 }
 
 // IsSyncActors returns whether actor avatar synchronization is enabled (defaults to true).
@@ -35,6 +41,12 @@ func (c *Config) Normalize() error {
 	c.MediaPath = strings.TrimSpace(c.MediaPath)
 	c.LocalDir = strings.TrimSpace(c.LocalDir)
 	c.PublicURL = strings.TrimRight(strings.TrimSpace(c.PublicURL), "/")
+	c.ProxyListen = strings.TrimSpace(c.ProxyListen)
+	if c.ProxyListen == "" {
+		c.ProxyListen = embyproxy.DefaultListen
+	}
+	c.ProxyPublicURL = strings.TrimRight(strings.TrimSpace(c.ProxyPublicURL), "/")
+	c.ProxyRunning, c.ProxyError = false, ""
 	if c.SyncActors == nil {
 		defaultSync := true
 		c.SyncActors = &defaultSync

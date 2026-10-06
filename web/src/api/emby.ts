@@ -16,6 +16,11 @@ export type EmbyConfig = {
   local_dir?: string
   sync_actors?: boolean
   public_url?: string
+  proxy_enabled?: boolean
+  proxy_listen?: string
+  proxy_public_url?: string
+  proxy_running?: boolean
+  proxy_error?: string
 }
 
 export type EmbyServerInfo = {

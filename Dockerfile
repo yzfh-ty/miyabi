@@ -48,7 +48,7 @@ COPY LICENSE /app/LICENSE
 ENV MIYABI_LISTEN=":8080" MIYABI_DATA_DIR="/app/data" MIYABI_LOG_LEVEL="info"
 
 VOLUME ["/app/data"]
-EXPOSE 8080
+EXPOSE 8080 8099
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/app/miyabi", "healthcheck"]

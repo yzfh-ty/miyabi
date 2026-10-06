@@ -88,3 +88,27 @@ test('an older settings read cannot overwrite an optimistic Emby save', async ()
   await pending
   assert.deepEqual(client.getQueryData(embyKeys.config), next)
 })
+
+test('proxy saves apply actual running status and failed port changes restore the saved listener', async () => {
+  const { client, mutation } = fixture()
+  const next = {
+    ...previous,
+    proxy_enabled: true,
+    proxy_listen: '0.0.0.0:8099',
+    proxy_public_url: 'https://play.example'
+  }
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValueOnce(Response.json({ ...next, proxy_running: true }))
+  )
+  await mutation.execute(next)
+  assert.equal(client.getQueryData<EmbyConfig>(embyKeys.config)?.proxy_running, true)
+  const saved = client.getQueryData<EmbyConfig>(embyKeys.config)
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValueOnce(Response.json({ error: 'port occupied' }, { status: 400 }))
+  )
+  await assert.rejects(mutation.execute({ ...next, proxy_listen: '0.0.0.0:8080' }))
+  assert.deepEqual(client.getQueryData(embyKeys.config), saved)
+  assert.equal(client.getQueryState(embyKeys.config)?.isInvalidated, true)
+})

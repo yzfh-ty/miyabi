@@ -20,6 +20,9 @@ interface EmbyFormData {
   media_path: string
   sync_actors: boolean
   public_url: string
+  proxy_enabled: boolean
+  proxy_listen: string
+  proxy_public_url: string
 }
 
 function configToFormData(config?: EmbyConfig | null): EmbyFormData {
@@ -31,7 +34,10 @@ function configToFormData(config?: EmbyConfig | null): EmbyFormData {
     api_key: config?.api_key ?? '',
     media_path: config?.media_path ?? '',
     sync_actors: config?.sync_actors ?? true,
-    public_url: config?.public_url ?? ''
+    public_url: config?.public_url ?? '',
+    proxy_enabled: config?.proxy_enabled ?? false,
+    proxy_listen: config?.proxy_listen || '0.0.0.0:8099',
+    proxy_public_url: config?.proxy_public_url ?? ''
   }
 }
 
@@ -55,6 +61,9 @@ export function EmbySection() {
       current.api_key !== initial.api_key ||
       current.media_path !== initial.media_path ||
       current.public_url !== initial.public_url ||
+      current.proxy_enabled !== initial.proxy_enabled ||
+      current.proxy_listen !== initial.proxy_listen ||
+      current.proxy_public_url !== initial.proxy_public_url ||
       current.sync_actors !== initial.sync_actors)
 
   // Keep the saved form visible until the query observer receives the same
@@ -159,7 +168,10 @@ export function EmbySection() {
       api_key: trimmedKey,
       media_path: current.media_path.trim(),
       sync_actors: current.sync_actors,
-      public_url: current.public_url.trim()
+      public_url: current.public_url.trim(),
+      proxy_enabled: current.proxy_enabled,
+      proxy_listen: current.proxy_listen.trim(),
+      proxy_public_url: current.proxy_public_url.trim()
     }
 
     updateConfig.mutate(payload, {
@@ -197,7 +209,59 @@ export function EmbySection() {
             />
           </SettingRow>
 
-          <SettingRow title="服务器地址" description="Emby 服务的 IP 或域名">
+          <SettingRow
+            title="播放反代"
+            description="播放器连接反代入口后，115 视频将直接从 CDN 加载"
+            inline
+          >
+            <Switch
+              checked={current.proxy_enabled}
+              disabled={disabled}
+              onCheckedChange={checked => updateField('proxy_enabled', checked)}
+            />
+          </SettingRow>
+
+          {current.proxy_enabled ? (
+            <>
+              <SettingRow
+                title="反代监听地址"
+                description="默认 0.0.0.0:8099；Docker 部署需映射该端口"
+              >
+                <Input
+                  value={current.proxy_listen}
+                  placeholder="0.0.0.0:8099"
+                  disabled={disabled}
+                  onChange={e => updateField('proxy_listen', e.target.value)}
+                />
+              </SettingRow>
+              <SettingRow
+                title="反代访问地址"
+                description="播放器连接使用的完整地址；公网 HTTPS 或端口映射时请填写，不能填原 Emby 地址"
+              >
+                <Input
+                  value={current.proxy_public_url}
+                  placeholder="http://192.168.1.100:8099"
+                  disabled={disabled}
+                  onChange={e => updateField('proxy_public_url', e.target.value)}
+                />
+              </SettingRow>
+              <div className="space-y-1 text-sm text-muted-foreground">
+                <p>
+                  {isDirty
+                    ? '保存后生效'
+                    : config?.proxy_running
+                      ? '播放反代已运行，请将播放器中的 Emby 地址改为反代入口。'
+                      : '播放反代未运行'}
+                </p>
+                {!isDirty && config?.proxy_error ? (
+                  <InlineError>{config.proxy_error}</InlineError>
+                ) : null}
+                <p>115 视频仅直接播放；客户端需支持原视频格式，播放失败不会回退到服务器转码。</p>
+              </div>
+            </>
+          ) : null}
+
+          <SettingRow title="服务器地址" description="原 Emby 服务的 IP 或域名，不能填反代入口">
             <Input
               autoFocus={form?.enabled === true && !initial.enabled}
               value={current.host}

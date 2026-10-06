@@ -14,6 +14,7 @@ import (
 
 	"github.com/ppxb/miyabi/internal/database"
 	"github.com/ppxb/miyabi/internal/domain"
+	"github.com/ppxb/miyabi/internal/embyproxy"
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/export"
 	"github.com/ppxb/miyabi/internal/gfriends"
@@ -34,6 +35,7 @@ type Service struct {
 	exportMgr         *export.Manager
 	updateMu          sync.Mutex
 	scheduleLocalScan func(context.Context) error
+	playbackProxy     *embyproxy.Server
 }
 
 type Dependencies struct {
@@ -41,6 +43,8 @@ type Dependencies struct {
 	Media             MediaFetcher
 	ExportManager     *export.Manager
 	ScheduleLocalScan func(context.Context) error
+	PlaybackRelay     embyproxy.Relay
+	MainListen        string
 }
 
 // NewService restores configuration and installs dependencies before starting workers.
@@ -61,6 +65,9 @@ func NewService(ctx context.Context, db *ent.Client, initial Config, deps Depend
 		}
 	}
 
+	if cfg.ProxyListen == "" {
+		cfg.ProxyListen = embyproxy.DefaultListen
+	}
 	subCtx, cancel := context.WithCancel(context.Background())
 	s := &Service{
 		db:                db,
@@ -72,6 +79,10 @@ func NewService(ctx context.Context, db *ent.Client, initial Config, deps Depend
 		cancel:            cancel,
 		exportMgr:         deps.ExportManager,
 		scheduleLocalScan: deps.ScheduleLocalScan,
+	}
+	s.playbackProxy = embyproxy.NewServer(deps.PlaybackRelay, deps.MainListen)
+	if err := s.playbackProxy.Restore(proxyConfig(cfg)); err != nil {
+		slog.Warn("Emby playback proxy did not start", "error", err)
 	}
 	s.actors = newActorSync(db, s.client, s.currentConfig, deps.GFriends, deps.Media)
 	if s.exportMgr != nil {
@@ -92,13 +103,25 @@ func NewService(ctx context.Context, db *ent.Client, initial Config, deps Depend
 
 // Close makes a final delivery attempt; outstanding updates remain in the database.
 func (s *Service) Close() {
+	s.updateMu.Lock()
+	if s.playbackProxy != nil {
+		s.playbackProxy.Close()
+	}
 	s.cancel()
+	s.updateMu.Unlock()
 	s.actors.close()
 	s.wg.Wait()
 }
 
 // Config returns the current active configuration.
-func (s *Service) Config(context.Context) (Config, error) { return s.currentConfig(), nil }
+func (s *Service) Config(context.Context) (Config, error) {
+	cfg := s.currentConfig()
+	if s.playbackProxy != nil {
+		status := s.playbackProxy.Status()
+		cfg.ProxyRunning, cfg.ProxyError = status.Running, status.Error
+	}
+	return cfg, nil
+}
 
 func (s *Service) currentConfig() Config {
 	s.mu.RLock()
@@ -108,6 +131,13 @@ func (s *Service) currentConfig() Config {
 		cfg.PublicURL = s.defaultPublicURL
 	}
 	return cfg
+}
+
+func proxyConfig(cfg Config) embyproxy.Config {
+	return embyproxy.Config{
+		Enabled: cfg.Enabled && cfg.ProxyEnabled, Listen: cfg.ProxyListen,
+		Upstream: cfg.ServerURL, STRMURL: cfg.PublicURL, PublicURL: cfg.ProxyPublicURL,
+	}
 }
 
 // UpdateConfig validates and persists the new configuration to the database.
@@ -130,8 +160,15 @@ func (s *Service) UpdateConfig(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	if err := database.SaveSetting(ctx, s.db, SettingKey, cfg); err != nil {
-		return fmt.Errorf("save emby setting: %w", err)
+	var saveError error
+	if err := s.playbackProxy.Configure(proxyConfig(cfg), func() error {
+		saveError = database.SaveSetting(ctx, s.db, SettingKey, cfg)
+		return saveError
+	}); err != nil {
+		if saveError != nil {
+			return fmt.Errorf("save emby setting: %w", saveError)
+		}
+		return domain.E(domain.KindInvalid, err.Error(), nil)
 	}
 
 	s.mu.Lock()

@@ -133,6 +133,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		Transport: netx.NewTransport(networkSvc.ProxyManager()),
 	})
 	syncActors := cfg.EmbySyncActors
+	strmRelay := strm.New(store.Client, driveSvc)
 	embySvc, err := emby.NewService(ctx, store.Client, emby.Config{
 		Enabled:    cfg.EmbyEnabled,
 		ServerURL:  cfg.EmbyServerURL,
@@ -146,6 +147,8 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		Media:             metadataSvc,
 		ExportManager:     exportMgr,
 		ScheduleLocalScan: libSvc.ScheduleLocalScan,
+		PlaybackRelay:     strmRelay,
+		MainListen:        cfg.Listen,
 	})
 	if err != nil {
 		metadataSvc.Close()
@@ -197,7 +200,7 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 		Offline:        offlineSvc,
 		Monitor:        monitorSvc,
 		Library:        libSvc,
-		STRM:           strm.New(store.Client, driveSvc),
+		STRM:           strmRelay,
 		Tasks:          &taskViews{Service: taskSvc, database: store.Client, library: libSvc, monitor: monitorSvc},
 		Artwork:        scrapeSvc,
 		Maintenance:    maintenanceSvc,
