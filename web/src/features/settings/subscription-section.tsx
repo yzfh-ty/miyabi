@@ -43,7 +43,7 @@ export function SubscriptionSection() {
     update.mutate(
       { ...config, ...patch, preferences: { ...config.preferences, ...preferences } },
       {
-        onSuccess: () => toast.success('订阅设置已保存'),
+        onSuccess: () => toast.success('订阅与下载设置已保存'),
         onError: error => {
           toast.error(describeApiError(error))
         }
@@ -52,7 +52,7 @@ export function SubscriptionSection() {
   }
 
   return (
-    <SettingsSection icon={<BellIcon className="size-4" />} title="订阅设置">
+    <SettingsSection icon={<BellIcon className="size-4" />} title="订阅与下载">
       <SettingRow
         title="影片默认自动入库"
         description="新订阅的影片出现符合偏好的磁力后自动加入 115"
@@ -77,7 +77,19 @@ export function SubscriptionSection() {
         />
       </SettingRow>
 
-      <SettingRow title="字幕" description="「必须」时没有字幕的磁力不会入库，继续等待">
+      <SettingRow
+        title="自动切换磁力"
+        description="下载长时间没有进展时，取消当前下载并尝试下一条符合偏好的磁力"
+        inline
+      >
+        <Switch
+          checked={config?.download.auto_switch ?? true}
+          disabled={disabled}
+          onCheckedChange={checked => save({ download: { auto_switch: checked } })}
+        />
+      </SettingRow>
+
+      <SettingRow title="字幕" description="订阅与换源共用；「必须」时只选择符合字幕条件的磁力">
         <Select
           value={config?.preferences.subtitle ?? 'preferred'}
           disabled={disabled}
@@ -136,7 +148,9 @@ export function SubscriptionSection() {
         </Select>
       </SettingRow>
 
-      {settings.isError ? <InlineError>后端服务暂不可用，无法读取订阅设置。</InlineError> : null}
+      {settings.isError ? (
+        <InlineError>后端服务暂不可用，无法读取订阅与下载设置。</InlineError>
+      ) : null}
     </SettingsSection>
   )
 }

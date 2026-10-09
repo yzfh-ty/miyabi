@@ -17,6 +17,7 @@ var ErrMagnetNotFound = domain.E(domain.KindInvalid, "磁力链不属于当前�
 type Catalogue interface {
 	HasMagnet(ctx context.Context, movieID, hash string) (bool, error)
 	MovieCode(ctx context.Context, movieID string) (string, error)
+	CatalogueMagnets(ctx context.Context, movieID string) ([]domain.Magnet, error)
 }
 
 // Library schedules scans and projects their current workflow status.
@@ -36,6 +37,8 @@ type Service struct {
 	// caller may have gone away but the mutation must be recorded.
 	submitTimeout time.Duration
 	operations    offlineOperations
+	now           func() time.Time
+	policy        recoveryPolicy
 }
 
 // New creates a new offline download management service.
@@ -48,5 +51,12 @@ func New(database *ent.Client, catalogue Catalogue, drive *drive.Drive, tasks *t
 		library:   library,
 
 		submitTimeout: submitTimeout,
+		now:           time.Now,
+		policy: recoveryPolicy{
+			zeroProgressTimeout: 15 * time.Minute,
+			stalledTimeout:      30 * time.Minute,
+			completionGrace:     60 * time.Minute,
+			maxAttempts:         3,
+		},
 	}
 }

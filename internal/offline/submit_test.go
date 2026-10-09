@@ -82,13 +82,19 @@ func TestOfflineDuplicateOutsideLibrary(t *testing.T) {
 				removes++
 				return nil
 			}
+			scansBefore := service.database.Task.Query().Where(task.TypeEQ("scan")).CountX(ctx)
 			result, err := service.Add(ctx, "fixture-movie", offlineHashA)
 			if test.wantErr {
 				if err == nil || adds != 1 || removes != 0 || outputChecks != 0 {
 					t.Fatalf("active task was replaced: adds=%d removes=%d checks=%d err=%v", adds, removes, outputChecks, err)
 				}
-				if count := service.database.OfflineDownload.Query().CountX(ctx); count != 0 {
-					t.Fatalf("rejected task was recorded: %d", count)
+				record := service.database.OfflineDownload.Query().OnlyX(ctx)
+				if record.Recovery == nil || record.Recovery.Action != actionSubmit || record.Recovery.Failures != 1 ||
+					record.Recovery.RetryAt.IsZero() || record.Error == nil || *record.Error == "" || record.ScanTaskID != 0 {
+					t.Fatalf("conflicting submission lost its recovery checkpoint: %+v", record)
+				}
+				if count := service.database.Task.Query().Where(task.TypeEQ("scan")).CountX(ctx); count != scansBefore {
+					t.Fatalf("conflicting output was queued for scanning: %d", count)
 				}
 				return
 			}
@@ -150,8 +156,10 @@ func TestOfflineDuplicateRecoveryStopsOnErrors(t *testing.T) {
 			if !errors.Is(err, failure) || adds != wantAdds || removes != wantRemoves {
 				t.Fatalf("failed recovery: adds=%d removes=%d err=%v", adds, removes, err)
 			}
-			if count := service.database.OfflineDownload.Query().CountX(t.Context()); count != 0 {
-				t.Fatalf("unsuccessful submission was recorded: %d", count)
+			record := service.database.OfflineDownload.Query().OnlyX(t.Context())
+			if record.Recovery == nil || record.Recovery.Action != actionSubmit || !record.Recovery.SubmissionStarted ||
+				record.Recovery.Failures != 1 || record.Recovery.RetryAt.IsZero() || record.Error == nil || *record.Error == "" || record.ScanTaskID != 0 {
+				t.Fatalf("unsuccessful submission lost its recovery checkpoint: %+v", record)
 			}
 		})
 	}

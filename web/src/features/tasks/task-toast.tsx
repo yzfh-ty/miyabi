@@ -1,13 +1,22 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { LoaderCircleIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import type { OfflineSubmission } from '@/api/offline'
-import { isTaskActive, type BatchTask, type ScanTask } from '@/api/tasks'
+import {
+  isScanTask,
+  isTaskActive,
+  taskKeys,
+  type BatchTask,
+  type ScanTask,
+  type Task
+} from '@/api/tasks'
 import { isOfflineTaskActive } from '@/api/offline'
 import { scanStage, scanStatus } from './scan-status'
 import { TaskProgress } from './task-progress'
 import { TaskToastActions } from './task-toast-actions'
 import { batchToastID, offlineToastID, scanToastID } from './task-notification-diff'
+import { downloadStatus } from './download-status'
 
 type TaskToastOptions = {
   waiting?: boolean
@@ -18,7 +27,8 @@ function taskToastOptions(
   id: string,
   active: boolean,
   options: TaskToastOptions = {},
-  retryTaskID?: number
+  retryTaskID?: number,
+  cancelTaskID?: number
 ) {
   return {
     id,
@@ -27,12 +37,23 @@ function taskToastOptions(
     closeButton: false,
     icon: undefined,
     onDismiss: options.onDismiss,
-    action: <TaskToastActions id={id} retryTaskID={retryTaskID} />
+    action: <TaskToastActions id={id} retryTaskID={retryTaskID} cancelTaskID={cancelTaskID} />
   }
 }
 
 export function notifyTaskError(id: string, title: string, description: string) {
   toast.error(title, { ...taskToastOptions(id, false), description })
+}
+
+export function useNotifyScanTask() {
+  const queryClient = useQueryClient()
+  return (task: ScanTask) => {
+    // Mutation callbacks may run after a refresh or SSE has already finished the task.
+    const latest = queryClient
+      .getQueryData<Task[]>(taskKeys.all)
+      ?.find((item): item is ScanTask => isScanTask(item) && item.id === task.id)
+    notifyScanTask(latest ?? task)
+  }
 }
 
 export function notifyScanTask(task: ScanTask, options: TaskToastOptions = {}) {
@@ -94,7 +115,8 @@ export function notifyOfflineTask(
     id,
     active,
     options,
-    options.scan?.can_retry ? options.scan.id : undefined
+    options.scan?.can_retry ? options.scan.id : undefined,
+    task.can_cancel ? task.task_id : undefined
   )
   if (active) {
     const scan = options.scan
@@ -109,7 +131,14 @@ export function notifyOfflineTask(
       ) : (
         <TaskProgress
           offline
-          label={task.phase !== 'downloading' && scan ? scanStatus(scan) : undefined}
+          hint={task.error ?? task.switch_reason}
+          label={
+            task.phase === 'downloading'
+              ? downloadStatus(task)
+              : scan
+                ? scanStatus(scan)
+                : undefined
+          }
           current={
             task.phase === 'downloading'
               ? 'downloading'
@@ -129,6 +158,8 @@ export function notifyOfflineTask(
         />
       )
     })
+  } else if (task.status === 'cancelled') {
+    toast.info(task.code, { ...props, description: '已取消下载' })
   } else if (task.phase === 'in_library') {
     const notify = task.error ? toast.warning : toast.success
     notify(task.code, {

@@ -2,18 +2,20 @@
 
 > 复核日期：2026-10-02。基线：`v0.2.0 / e79cb1e`。
 > 本轮逐项复核原清单 111 项，保留原编号；补充用户反馈第 245 项，共 112 项。已解决项移出待办，仅保留简短结论及代码位置。
-> 首次复核只更新审计报告；后续已完成第 135、138、142、148、149、161、166、168、173、184、189、192、193、194、206、222、224、235 项处理，并同步结论。“确认存在”表示代码路径仍在，不代表已经在真实大库或浏览器中测得故障。可选重构不能计作已确认 bug。
+> 首次复核只更新审计报告；后续已完成第 135、138、140、142、146、147、148、149、153、156、157、158、161、166、168、173、184、189、192、193、194、206、222、224、235 项处理，并同步结论。“确认存在”表示代码路径仍在，不代表已经在真实大库或浏览器中测得故障。可选重构不能计作已确认 bug。
+> 第 151 项已完成手动重连优化；首屏业务数据校正按本轮范围保留，是否进一步合并仍需实测，因此不计作整项完成。
+> 第 152 项已完成四类设置查询的缓存复用；任务、影片状态、离线活动及订阅列表的挂载刷新保留，不计作整项完成。
 
 ## 复核结果
 
 | 状态 | 数量 | 含义 |
 | --- | ---: | --- |
 | 确认仍存在，待处理 | 1 | 有明确代码依据的边界、状态反馈或行为问题 |
-| 可选优化与整理 | 57 | 重复、风格或潜在成本仍在，但收益和方案需验证 |
+| 可选优化与整理 | 50 | 重复、风格或潜在成本仍在，但收益和方案需验证 |
 | 需要用户实测 | 3 | 195、227 为视觉推断；245 为用户反馈，尚未定位 |
 | 按现有约定暂缓 | 10 | 用户明确暂不处理的事项，或不恢复已取消的 UI、ARIA 等要求 |
 | 撤回原问题结论 | 11 | 原结论不成立、风险描述过度，或把设计选择当成 bug |
-| 已解决或随功能删除失效 | 30 | 移出实施队列，保留回归能力 |
+| 已解决或随功能删除失效 | 37 | 移出实施队列，保留回归能力 |
 
 优先处理顺序：
 
@@ -31,6 +33,15 @@
 
 ### 本轮验证与限制
 
+- 第 158 项整理后通过：`go test ./internal/api ./internal/app ./internal/strm ./internal/export`、同范围 `go vet`。回归验证普通 4xx/5xx 只记录一条请求日志、完整错误链与多个错误均保留且不重复写 cause、请求 ID/耗时/分类及公共响应保持正确、URL 凭据与查询参数不泄露。覆盖已写成功/失败响应后的错误、仅状态码的失败、断链、panic 及已写响应后的 panic；panic 仍保留专用 ERROR 堆栈日志和同 ID 的访问摘要。499 访问日志继续过滤，DEBUG 取消诊断保留。未执行浏览器测试或性能基准，不将日志条数减少换算成接口提速。
+- 第 156 项整理后通过：`go test ./internal/drive ./internal/offline ./internal/library/... ./internal/strm ./internal/app`、同范围 `go vet`。新增五种来源读取的回归覆盖正常结果、过期会话不刷新令牌、读取中换目录/断开后丢弃结果、上游错误优先且不泄露部分结果、请求前/请求中取消、正常令牌刷新及刷新中来源变更后不发起读取。既有离线提交成功后保留原来源记录、账号级任务同步和播放地址回归通过。未进行真实 115 或浏览器实测，不声称减少网络请求或实际耗时。
+- 第 157 项整理后通过：`go test ./internal/javbus ./internal/catalogue ./internal/magnet ./internal/app`、同范围 `go vet`。新增离线回归覆盖详情与磁力接口的 404/重定向差异、未找到内容与挑战页的判断顺序、来源可用状态、响应体关闭、2 MiB 读取上限和错误上下文；虚拟时间验证共用限流及等待期间取消，既有取消/超时和新鲜详情参数回归保留，并加强两类请求头检查。未进行真实站点的详情/磁力抓取或浏览器实测，不声称减少正常获取磁力所需的两次请求。
+- 第 153 项修复后通过：前端 `npm run test`（29 个文件 / 176 项）、`npm run lint`、`npm run typecheck`、`npm run build` 及修改文件的 oxfmt 格式化。新增 22 项 Node 回归，使用真实 QueryClient/QueryObserver、操作回调及模拟 SSE，覆盖同批失效合并、读取期间多次变化只排一次后续校正、无缓存旧请求丢弃、快照取消当前和排队任务读取、不同客户端隔离、失败后恢复、SSE/操作响应两种顺序及在途交错、账号切换和取消/换源失败后的状态校正。未进行浏览器测试，不宣称每次操作固定只有一次 HTTP 请求；读取开始后发生的变化仍保留必要的后续校正。
+- 第 152 项设置查询优化后通过：前端 `npm run test -- tests/settings-cache.test.tsx tests/emby-settings.test.ts tests/query-errors.test.ts`（3 个文件 / 12 项）、`npm run lint`、`npm run build`（包含 TypeScript 检查）及修改文件的 oxfmt 格式化。新增 4 项 Node 回归，将实际查询选项交给 QueryObserver，验证四类查询首次读取、14999ms 内重新挂载复用缓存、15000ms 边界重新挂载刷新，以及主动失效立即重读；保留既有 Emby 保存回写、部分失败校正和旧响应竞争回归。未执行浏览器测试，不将缓存窗口视为每 15 秒轮询。
+- 第 151 项手动重连优化后通过：前端 `npm run test`（27 个文件 / 150 项）、`npm run lint`、`npm run build`（包含 TypeScript 检查）及修改文件的 oxfmt 格式化。新增 6 项 Node 回归，通过模拟 EventSource、驱动实际连接 effect 和 QueryObserver，验证成功重连不追加 HTTP 任务查询、15 秒连接等待超时及失败时恢复兜底、同一断线期间只请求一次、旧 HTTP 响应不能覆盖新 SSE 快照、首屏/重连版本校正保留及卸载时清理定时器。未执行浏览器测试，不据此推算真实首屏请求减少量。
+- 第 146 项优化后通过：`go test ./internal/javdb ./internal/catalogue ./internal/app`、同范围 `go vet`。新增虚拟时间回归覆盖按实际探测开始时间取消、更快结果到达后提前更新截止时间、已取消探测延迟收尾时不忙等，以及相同延迟和零延迟的优先顺序；保留动态线路发现、排除客户端创建耗时、全量测速和调用方取消等既有回归。未进行真实线路测速或 CPU 基准，不据此声称实际请求提速比例。
+- 第 147 项优化后通过：`go test ./internal/domain/subtitle ./internal/subtitle ./internal/library/...`、同范围 `go vet`。新增混合 ASCII、汉字和 emoji 的取样边界回归，验证第 15000 个字符计入、第 15001 个起忽略，保留提示优先、简繁统计及缺省结果。局部基准 `BenchmarkDetectLanguage`（Windows/amd64、i5-12600K、200ms，重复汉字合成输入）中，15000 字符由约 0.476ms / 65536 B 降至 0.353ms / 0 B；100 万字符由约 5.424ms / 4005901 B 降至 0.361ms / 0 B，每次堆分配均从 1 次降至 0 次。仅测语言检测函数，不包含字幕下载、解码或入库，不据此推算整个流程提速。
+- 第 140 项优化后通过：`go test ./...`、`go vet ./internal/strm ./internal/drive ./internal/api ./internal/app`。新增离线回归验证缓存命中跳过文件索引与地址申请、文件/UA/账号/授权版本/挂载隔离、12 个并发请求合并、失败不驻留、签名到期前刷新、未知有效期跳过缓存、容量淘汰、单个调用取消、共享超时和关闭等待，以及 Range 请求仍返回原样签名重定向。未进行真实 115 播放或浏览器测试，不宣称实际起播提速比例；未运行 race 检测（当前 Go 环境 CGO_ENABLED=0）。
 - 第 235 项修复后通过：`go test ./internal/api ./internal/app ./internal/strm ./internal/export`、同范围 `go vet`。新增离线 HTTP 回归覆盖 GET/HEAD 播放鉴权、签名重定向及图片源 URL 原样传递、查询参数/Referer 不落访问日志、错误消息/cause/已写响应错误的地址脱敏、编码与嵌套 URL、panic 堆栈保留及 Gin 原始输出关闭、断链处理和 499 日志过滤。只使用测试凭据，未读取生产令牌、清理历史日志或修改 STRM 文件。
 - 第 235 项局部微基准：`go test ./internal/api -run '^$' -bench '^BenchmarkRequestLogFields$' -benchmem -benchtime=200ms`。Windows/amd64、i5-13490F，128 字节/64 KiB 查询参数的过滤后记录分别约 653/654 ns，每条 160 B、1 次分配；未过滤对照约 734 ns/61.4 μs。该基准仅测合成访问日志字段处理与 JSON 编码，输出到 io.Discard，不含中间件其余工作、错误脱敏、网络或实际日志写入，不据此声称全链路提速或零开销。
 - 第 224 项按用户要求移除路径展示后，通过前端 `npm run typecheck`、`npm run lint` 及修改文件的 oxfmt 格式检查。仅调整设置行展示，未新增测试或执行浏览器测试，未操作实际挂载目录。
@@ -45,7 +56,7 @@
 - 通过：`go test ./internal/api ./internal/app ./internal/database ./internal/tasks ./internal/library/... ./internal/emby ./internal/netx ./internal/monitor`。
 - 通过：前端 `npm run test`，25 个文件 / 141 项测试。相关用例验证任务共享快照、索引、事务、来源隔离、重启恢复、Emby 通知和详情交互逻辑。
 - 额外核对依赖实现：slog-gin v1.21.1 会构造 RawQuery/Referer 字段，第 235 项现已在日志输出前按字段省略；Gin v1.12.0 的代理解析会在错误时保留已解析前缀。没有读取或输出生产令牌。
-- 没有浏览器测试、真实上游/Emby 联调、race 检测或全链路性能基准；第 235 项仅进行了上述局部日志微基准。旧报告中的毫秒数、倍数、对比度和固定积压耗时不再作为本轮结论。
+- 没有浏览器测试、真实上游/Emby 联调、race 检测或全链路性能基准；第 235、147 项仅进行了上述局部日志与语言检测微基准。旧报告中的毫秒数、倍数、对比度和固定积压耗时不再作为本轮结论。
 - 第 135 项修复后通过：`go test ./internal/library/... ./internal/app`、`go vet ./internal/library/... ./internal/app`；新增覆盖跨目录过期回收（命中、未命中及请求失败）、目录数/文件总数上限、淘汰后重新读取、超大目录完整读取且不驻留、账号隔离和返回列表修改隔离。保留现有视频位置核验与发布回放回归。限额约束缓存记录数，不代表内存字节硬上限或真实大库性能结论。
 - 第 138 项修复后通过：`go test ./internal/pan ./internal/drive ./internal/library/... ./internal/app`、同范围 `go vet`。新增离线回归覆盖仅 downurl 使用 API 限流、CDN 请求 UA/凭据隔离、文件大小边界与响应体关闭、瞬时故障重试、Retry-After、请求头/正文超时及退避期间取消。未测量真实网盘扫描提速比例。
 - 第 142 项修复后通过：`go test ./internal/pan ./internal/drive ./internal/library/... ./internal/app ./internal/api ./internal/monitor`、同范围 `go vet`。新增回归覆盖并发账号校验的成功/失败共享、TTL 到期重查、等待者取消、共享请求超时与关闭流程、明确拒绝后的凭据持久化清除与重启、临时故障后重试、正在进行的扫码登录及新旧凭据交错；保留原有刷新合并、来源切换与登录回归。
@@ -69,28 +80,14 @@
   - 定位：`internal/offline/projection.go`；`web/src/api/offline.ts`。
 - **137.** 批量订阅每项完成后编码并写入包含全部 IDs、FailedIDs 的 payload。全量 JSON 写放大仍存在，但 UI 已共享快照，不再是每个 SSE 连接各查一遍。优化应分离不变输入与检查点，不能简单降低持久化频率而丢失恢复进度。
   - 定位：`internal/monitor/batch.go`；`internal/monitor/batch_tasks.go`。
-- **140.** 每次 STRM 请求仍查询索引并申请新的 115 播放地址。更正：GET/Range 走重定向，只有 HEAD 调用 CDN Probe；并非所有请求都探测 CDN。若增加短缓存，必须包含账号/凭据版本和 UA，并处理签名过期。
-  - 定位：`internal/api/strm.go`；`internal/strm/relay.go`。
 - **145.** ResolveMovieID 仍多次遍历累积候选，matchCandidates 重复 Normalize/IsFormatEquivalent。可缓存规范化结果；需保留层级优先、同 ID 去重和歧义拒绝，尚无当前负载收益数据。
   - 定位：`internal/javdb/movie.go`。
-- **146.** selectRoute 非 full 模式仍使用 5ms ticker，存在高频唤醒。可按有效探测开始时间和当前最佳延迟安排 timer；必须保留启动耗时不计入请求延迟的语义。
-  - 定位：`internal/javdb/route.go`。
-- **147.** DetectLanguage 先将全文转换为 []rune 再截取 15000 字符，大字幕仍有不必要分配。可先有界遍历；约 40 字符 marker 的线性查找是否改 map 应另测，不能把它直接认定为瓶颈。位置已从旧 subtitle/label.go 更新。
-  - 定位：`internal/domain/subtitle/label.go`。
-- **151.** SSE 首个 changes 事件会将三类 revision 都判为变化并刷新相关查询，手动重连也先失效 tasks。存在首屏刷新合并空间；不能直接删除基线校正，否则查询与订阅建立之间的更新可能漏掉。实际重复请求次数需浏览器确认。
-  - 定位：`web/src/features/tasks/task-events.tsx`。
-- **152.** 任务、状态、离线及部分设置查询仍使用 refetchOnMount:'always'。这与 staleTime 共存本身不是错误；应结合挂载次数、SSE 断线恢复和缓存时效逐项测量，不统一删除。
-  - 定位：`web/src/api/tasks.ts`；`web/src/api/movie-states.ts`；`web/src/api/offline.ts`；`web/src/api/query-client.ts`。
-- **153.** 离线提交与扫描成功后仍有 setQueryData、invalidate 和 SSE 刷新交汇。更正：setQueryData 不发网络请求；useOfflineTasks 的影片筛选与来源校验仍有职责，enabled 也不是无效配置。仅评估重复失效调度，不删除跨来源保护。
-  - 定位：`web/src/api/offline.ts`；`web/src/api/library.ts`。
+- **151.** 手动重连已优先接收新 SSE 的任务快照，不再立即失效 tasks；同时重置本次尝试的兜底标记，连接失败或等待超时时仍能通过 HTTP 校正任务状态。首个 changes 事件仍按三类 revision 刷新相关业务查询，以补齐读取与订阅建立之间的变化；这部分按本轮范围保留，实际首屏重复请求次数及进一步合并收益需浏览器确认。
+  - 定位：`web/src/features/tasks/task-events.tsx`；`web/tests/task-events.test.tsx`。
+- **152.** 网络、Emby、订阅设置及缓存统计已移除 refetchOnMount:'always'，重新挂载时复用 15 秒内的新鲜数据，过期或主动失效后仍刷新；保存/清理成功回写和失败校正保留。任务、影片状态、离线活动及订阅列表仍保留强制挂载刷新，后续需结合 SSE 连接状态与漏事件恢复逐项评估，不统一删除。
+  - 定位：`web/src/api/network.ts`；`web/src/api/emby.ts`；`web/src/api/subscription-settings.ts`；`web/src/api/data.ts`；`web/tests/settings-cache.test.tsx`；`web/src/api/tasks.ts`；`web/src/api/movie-states.ts`；`web/src/api/offline.ts`；`web/src/api/subscriptions.ts`。
 - **154.** 媒体库和关键词搜索查询仍未提供 keepPreviousData，翻页会进入无缓存加载态；发现页查询已经使用。路由 intent 预加载仍未接查询 loader。是否预取及保留旧页应按请求量和交互实测决定。
   - 定位：`web/src/api/library.ts`；`web/src/api/discover.ts`；`web/src/router.tsx`。
-- **156.** sourceSession 多个读取方法仍重复来源检查、令牌调用与完成后检查。若抽取公共调用须区分读操作和已提交的写操作，不把所有方法机械套入同一个模板。
-  - 定位：`internal/drive/session.go`。
-- **157.** JavBus MoviePage 与 fetchMagnets 仍有请求头、限流、响应读取及挑战页判断的重复；旧 ensureDetailParams 已只是解析委托。两条路径的 404、重定向和 Accept/Referer 语义不同，只提取相同部分。
-  - 定位：`internal/javbus/client.go`。
-- **158.** errorMiddleware 与 slog-gin 都会记录失败请求，domain error 的 cause 也可能与 error 字符串重复。需明确访问日志与诊断日志职责；敏感字段脱敏优先于减少日志条数（见 235）。
-  - 定位：`internal/api/error.go`；`internal/api/router.go`。
 - **159.** authMiddleware 仍直接构造两种 UNAUTHORIZED 响应。可以统一私有响应助手，但必须保留本站会话与 PAN_UNAUTHORIZED 的区别；当前重复未造成已知故障。
   - 定位：`internal/api/auth.go`；`internal/api/error.go`。
 - **160.** Emby/网络测试接口仍先加载已保存配置再用请求体替换；订阅批量接口仍单独写 202，feed 复用含 kind 的查询结构。router 的 STRM 方法注册、gin 全局模式及命名整理均是可选重构；代理错误另归 237，不强制新增泛型 handler。
@@ -263,12 +260,26 @@
   - 定位：`internal/pan/metadata.go`；`internal/pan/client.go`；`internal/pan/metadata_test.go`。
 - [x] **139.** 115 sidecar 上传实现已删除，已无逐文件申请 OSS STS token 的生产路径；不再增加 token 缓存。
   - 定位：`internal/pan/client.go`。
+- [x] **140.** STRM 地址按文件、UA、账号、挂载目录和授权版本合并请求，最多缓存 256 条、60 秒，并在可识别签名到期前 30 秒停止复用；无法识别有效期或临近到期的地址不驻留，失败不缓存。命中后跳过文件索引和 115 地址申请，仍校验当前授权；登录、断开和换目录会隔离旧结果。共享查询有独立 45 秒超时并纳入关闭等待，调用方取消不影响其他等待者。原画/转码回退、GET/Range 重定向和 HEAD 探测保持原有行为，不缓存 CDN 响应头。
+  - 定位：`internal/strm/relay.go`；`internal/strm/cache.go`；`internal/strm/cache_test.go`；`internal/drive/session.go`；`internal/api/strm_test.go`。
 - [x] **142.** verifyAccount 按 credentialVersion 合并并发校验，复用 60 秒成功缓存；共享请求使用独立 45 秒超时并纳入关闭等待，单个等待者取消不影响其他调用，失败不缓存。RefreshToken 明确返回 ErrUnauthorized 时，在提交锁内重新核对凭据和 token 版本，再清除数据库与内存中的对应凭据并失效账号缓存；后续请求及重启不再重复刷新已拒绝的凭据。挂载目录和正在进行的扫码登录保留，旧响应不能清除新登录；网络超时、限流、服务端故障和响应解析错误不清除凭据。
   - 定位：`internal/drive/account.go`；`internal/drive/token.go`；`internal/drive/account_test.go`；`internal/drive/token_test.go`；`internal/drive/login_test.go`。
+- [x] **146.** selectRoute 的故障恢复选线已用可重设的单次定时器替代 5ms ticker，按实际探测开始时间和当前最佳耗时安排下一次取消；只有严格超过最佳耗时才取消，保留同耗时优先顺序。已取消探测退出计时但继续等待收尾，无待计时探测时停止定时器。动态线路尚未发现时不提前取消慢引导线路，客户端创建耗时不计入探测延迟，全量测速行为保留。
+  - 定位：`internal/javdb/route.go`；`internal/javdb/route_test.go`。
+- [x] **147.** DetectLanguage 直接遍历字符串的前 15000 个 Unicode 字符，到达上限即停止，不再为全文构造 []rune。显式语言提示、简繁标记统计和同分时默认简体的规则保留；小型 marker 列表继续使用现有线性查找，不扩展未经测量的替换。
+  - 定位：`internal/domain/subtitle/label.go`；`internal/domain/subtitle/label_test.go`。
 - [x] **148.** Check 现在按本轮开始时间筛选到期订阅，以 next_check_at/id 游标连续翻页；10 部影片和 5 个演员是交替处理的页大小，不再是整轮上限，跨页保留 2 秒请求间隔。单条查询或保存失败仍继续后续条目，游标避免失败记录在本轮反复命中；取消后未处理条目仍保持到期，供后续检查。5 分钟周期和新增订阅唤醒机制保留。无磁力且继续等待时也发送订阅更新通知。BatchHandler 每项只读取一次订阅，每批复用一次配置与磁力选择器，保留随机节流、失败统计和检查点恢复。
   - 定位：`internal/monitor/check.go`；`internal/monitor/batch.go`；`internal/monitor/check_backlog_test.go`；`internal/monitor/batch_test.go`；`internal/app/app.go`。
 - [x] **149.** Movie schema 已增加 created_at/id 组合索引，实际媒体库列表查询可利用该索引完成倒序分页。本地扫描先规范化绝对根路径，再以媒体绝对路径生成本地 fileID，区分不同根目录的同名文件；STRM 中识别出的网盘 fileID 继续保留。已有本地文件的名称、大小和相对路径仅在变化时更新，即使影片被手动纠正也刷新文件信息，同时保护手动资料及网盘文件属性。未添加旧本地 fileID 迁移或兼容分支。
   - 定位：`internal/ent/schema/movie.go`；`internal/ent/migrate/schema.go`；`internal/library/scan/local.go`；`internal/library/scan/local_ingest.go`；`internal/library/listing_index_test.go`；`internal/library/scan/local_identity_test.go`。
+- [x] **153.** 扫描、重新刮削、离线提交/取消/换源、任务控制和 SSE 共用按 QueryClient/查询前缀隔离的刷新队列；开始前合并重复失效，读取期间的变化只排一次后续校正，避免相互取消重发。首轮丢弃变化前的旧请求，完整任务快照取消当前及排队的任务读取，后续新变化仍可刷新。操作响应只在缓存仍与提交前一致且没有读取进行时回写，避免晚到响应回退已更新的状态；原有账号、目录、影片筛选及 enabled 限制保留，重新刮削回写也核对来源。首屏校正、手动重连兜底和失败后的重新读取保留。
+  - 定位：`web/src/api/query-refresh.ts`；`web/src/api/offline.ts`；`web/src/api/library.ts`；`web/src/api/tasks.ts`；`web/src/api/movie-states.ts`；`web/src/features/tasks/task-events.tsx`；`web/tests/query-refresh.test.ts`；`web/tests/task-events.test.tsx`。
+- [x] **156.** sourceSession 的 List、Info、Read、PlayURL、DownloadURL 已共用私有 readSource 泛型函数，集中请求前来源检查、现有令牌处理和成功后来源检查；失败或来源改变时返回对应类型零值，保留上游错误优先顺序。AddOffline 继续保留已提交结果，RemoveOffline 继续检查完成后的来源，OfflineTasks 和 CommitAccount 维持账号范围；未统一读写语义、增加策略开关或延长锁的持有范围。
+  - 定位：`internal/drive/session.go`；`internal/drive/session_read_test.go`。
+- [x] **157.** MoviePage 与 fetchMagnets 已共用限流、GET 请求与公共请求头、网络错误处理、限量响应读取，以及挑战页/验证页/状态码校验。详情页独有的未找到空结果规则、两类重定向处理、Accept/Referer 等请求头和各自解析保留在调用方；取消不禁用来源，响应体在成功与提前返回时均关闭。ensureDetailParams 继续只委托详情读取与参数解析，健康探测保持独立，不增加通用策略开关或缓存。
+  - 定位：`internal/javbus/client.go`；`internal/javbus/client_test.go`；`internal/javbus/response_test.go`。
+- [x] **158.** 普通业务错误由访问日志统一输出一条记录：错误中间件保留响应映射，恢复中间件外侧统一收集最终错误，附加 kind 和经脱敏的完整错误链；固定日志消息，移除重复的 cause 字段。已写响应及断链恢复后的错误也可记录，实际响应状态与日志级别规则保持原有行为。panic 单独保留 ERROR 堆栈诊断，并增加请求 ID 与访问摘要关联；499 访问过滤和 DEBUG 取消诊断保留，未修改领域错误字符串或公共响应。
+  - 定位：`internal/api/error.go`；`internal/api/logging.go`；`internal/api/router.go`；`internal/api/error_test.go`；`internal/api/logging_test.go`。
 - [x] **161.** 登录改为锁内预占与统一结算，失败数和在途数共同限制准入；格式错误只释放名额，成功清除失败历史但保留其他在途请求。IP 记录最多 4096 条，登录访问触发定期过期回收；满额时暂缓新 IP，不淘汰有效失败记录、封禁或在途记录。空闲时不主动清理，但仍受容量约束。保留默认 5 分钟内失败 5 次封禁 24 小时的策略，修正单次失败阈值及到期边界；错误 cause 使用通用限流文案，封禁提示按真实剩余时间生成。
   - 定位：`internal/api/rate_limiter.go`；`internal/api/auth.go`；`internal/api/rate_limiter_test.go`；`internal/api/auth_rate_limit_test.go`。
 - [x] **166.** 前端目录请求返回 404，首页与 SPA 回退直接提供 index.html，入口缺失也不列目录。仅已存在且符合当前 Vite 八位哈希命名的 assets 资源使用 `public, max-age=31536000, immutable`；入口和普通静态文件使用 `no-cache`。缺失资源、无效文件路径和 API 路径不回退 HTML；前端只接受 GET/HEAD，并保留静态文件条件请求与 Range 支持。SPA 回退不再改写原请求路径。
@@ -295,7 +306,7 @@
   - 定位：`web/src/features/settings/data-section.tsx`；`web/src/api/data.ts`。
 - [x] **224.** 用户决定不再展示已挂载媒体目录路径，已删除禁用输入框及其宽度样式，设置行统一为文字与操作按钮同行。挂载/更换目录、取消挂载、请求中禁用及错误提示保留，目录选择器仍接收当前目录。原只读/复制改造随路径展示删除失效，不再添加只读输入框。
   - 定位：`web/src/features/settings/pan-directory-row.tsx`；`web/src/features/settings/pan-directory-dialog.tsx`。
-- [x] **235.** API 访问日志在输出前省略 request.query 与 request.referer，成功请求只按字段名过滤，保留方法、路径、状态码、耗时和请求 ID；不逐个解析请求 URL。错误访问日志消息、error/cause 和 panic 信息中的 HTTP(S)/SOCKS5 地址移除凭据及片段、遮蔽全部查询参数；独立编码或不可解析的 URL 整段遮蔽。Gin 恢复的原始错误/请求输出已关闭，普通 panic 改为结构化脱敏日志并保留堆栈。原请求、响应、STRM 文件及播放鉴权不变，499 访问日志过滤保留。此处理作用于 Miyabi API 日志，不清理既有日志，也不覆盖外部反向代理或 Emby 自身的日志配置。
+- [x] **235.** API 访问日志在输出前省略 request.query 与 request.referer，成功请求只按字段名过滤，保留方法、路径、状态码、耗时和请求 ID；不逐个解析请求 URL。错误诊断（包含完整原因链）和 panic 信息中的 HTTP(S)/SOCKS5 地址移除凭据及片段、遮蔽全部查询参数；独立编码或不可解析的 URL 整段遮蔽。第 158 项整理后，普通请求使用固定日志消息，完整错误链仅记录在 error 字段。Gin 恢复的原始错误/请求输出已关闭，普通 panic 改为结构化脱敏日志并保留堆栈。原请求、响应、STRM 文件及播放鉴权不变，499 访问日志过滤保留。此处理作用于 Miyabi API 日志，不清理既有日志，也不覆盖外部反向代理或 Emby 自身的日志配置。
   - 定位：`internal/api/logging.go`；`internal/api/logging_test.go`；`internal/api/router.go`；`internal/api/error.go`。
 - [x] **239.** 旧 115 字幕、旧封面 payload 和历史迁移测试已清理；dir_cache、snapshot、检查点、来源隔离与事务测试仍验证当前功能，不按旧报告要求删除。剩余跨包测试归属统一放入 219/240。
   - 定位：`internal/library/scrape/dir_cache_test.go`；`internal/library/scrape/snapshot_test.go`；`internal/library/scrape/cover_checkpoint_test.go`；`internal/database/sqlite_test.go`。
