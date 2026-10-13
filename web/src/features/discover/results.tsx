@@ -2,8 +2,9 @@ import type { DiscoverMovie } from '@/api/discover'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { ListPagination } from '@/components/list-pagination'
-import { MovieGrid, MovieGridSkeleton } from '@/components/movie'
+import { MovieGridSkeleton } from '@/components/movie'
 import { DISCOVER_PAGE_SIZE } from './constants'
+import { MovieGrid } from './movie-grid'
 
 export function DiscoverResults({
   movies,

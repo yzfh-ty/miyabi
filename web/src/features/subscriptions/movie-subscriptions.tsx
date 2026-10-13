@@ -2,7 +2,8 @@ import type { SubscriptionItem } from '@/api/subscriptions'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { MovieGridLayout, MovieGridSkeleton } from '@/components/movie'
-import { isPendingSubscription, SubscriptionCard } from './subscription-card'
+import { SubscriptionCard } from './subscription-card'
+import { isPendingSubscription } from './subscription-status'
 
 export type MovieSubscriptionsProps = {
   items: SubscriptionItem[]

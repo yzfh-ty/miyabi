@@ -1,6 +1,6 @@
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { MovieGridLayout } from './movie-grid'
+import { MovieGridLayout } from './movie-grid-layout'
 
 export function MovieGridSkeleton({
   count = 8,

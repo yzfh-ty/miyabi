@@ -25,10 +25,6 @@ const statusLabels: Record<SubscriptionItem['status'], string> = {
   paused: '已暂停'
 }
 
-export function isPendingSubscription(item: SubscriptionItem) {
-  return item.status === 'waiting' || item.status === 'stale'
-}
-
 // Keep the card mounted when switching between browsing and selection.
 export function SubscriptionCard({
   item,

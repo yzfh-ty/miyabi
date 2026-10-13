@@ -26,7 +26,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ActorSubscriptions } from './actor-subscriptions'
 import { MovieSubscriptions } from './movie-subscriptions'
-import { isPendingSubscription } from './subscription-card'
+import { isPendingSubscription } from './subscription-status'
 
 import type { SubscriptionsSearch, SubscriptionsView } from './search'
 
