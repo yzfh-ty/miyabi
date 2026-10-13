@@ -151,6 +151,9 @@ func (r *scanRun) reconcile(ctx context.Context) error {
 	}
 	return r.scanner.exportMgr.WithConfig(func(expCfg export.Config) error {
 		finish := func() error {
+			if err := r.cleanupReassignedExports(ctx, expCfg); err != nil {
+				return err
+			}
 			reusable, err := r.prepareReconcile(ctx, expCfg)
 			if err != nil {
 				return err
@@ -322,6 +325,9 @@ func (r *scanRun) indexDirectory(ctx context.Context, directory Directory) error
 		return fmt.Errorf("scan %s: %w", directory.Path, err)
 	}
 
+	if err := resolveDirectoryParts(ctx, r.scanner.db, r.payload.Source.AccountID, directory.Path, directoryVideos, sidecars); err != nil {
+		return err
+	}
 	// Apply single-NFO tolerance matching to establish standard catalogue identity.
 	if len(sidecars) > 0 {
 		if err := applyManualCodes(ctx, r.scanner.db, r.payload.Source.AccountID, directoryVideos); err != nil {

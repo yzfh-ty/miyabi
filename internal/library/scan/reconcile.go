@@ -49,6 +49,39 @@ func (r *scanRun) staleFiles() predicate.File {
 	return stale
 }
 
+// Reassociation deletes old records during indexing. Keep their export cleanup
+// in the scan checkpoint so a failed removal or notification can be retried.
+// The caller holds the export configuration and source locks.
+func (r *scanRun) cleanupReassignedExports(ctx context.Context, cfg export.Config) error {
+	for _, code := range r.payload.ObsoleteCodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if cfg.EmbyDir == "" {
+			continue
+		}
+		exists, err := r.scanner.db.Movie.Query().Where(movie.CodeEQ(code)).Exist(ctx)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		dir := scrape.EmbyMovieDir(cfg.EmbyDir, code)
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("remove reassigned movie export %s: %w", code, err)
+		}
+		_ = os.Remove(filepath.Dir(dir))
+		if r.scanner.notifier != nil {
+			if err := r.scanner.notifier.NotifyUpdated(ctx, dir); err != nil {
+				return err
+			}
+		}
+	}
+	r.payload.ObsoleteCodes = nil
+	return nil
+}
+
 // Prepare only bounded pages of completed movies. Files that reconciliation
 // will delete must not participate in snapshot comparison or regenerated STRMs.
 func (r *scanRun) prepareReconcile(ctx context.Context, cfg export.Config) (map[int]time.Time, error) {

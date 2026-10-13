@@ -16,4 +16,6 @@ type ScanPayload struct {
 	Checkpoint    string        `json:"checkpoint,omitempty"`
 	// ReusedTasks links this scan to work already owned by another scan.
 	ReusedTasks []int `json:"reused_tasks,omitempty"`
+	// ObsoleteCodes survives chunk commits until reassigned exports are cleaned.
+	ObsoleteCodes []string `json:"obsolete_codes,omitempty"`
 }

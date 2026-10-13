@@ -191,7 +191,6 @@ func New(cfg *config.Config, logger *slog.Logger) (*App, error) {
 
 	router := api.NewRouter(api.Dependencies{
 		Logger:         logger,
-		Health:         store,
 		Access:         api.NewAccessGateService(cfg.AccessPassword, cfg.JWTSecret),
 		Catalogue:      catalogueSvc,
 		Metadata:       metadataSvc,
@@ -245,25 +244,20 @@ func (a *App) Run(ctx context.Context) error {
 
 	var workers sync.WaitGroup
 	poolError := make(chan error, len(a.pools))
-	workers.Add(len(a.pools) + 3)
 	for _, pool := range a.pools {
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			poolError <- pool.Run(ctx)
-		}()
+		})
 	}
-	go func() {
-		defer workers.Done()
+	workers.Go(func() {
 		tasks.RunPeriodic(ctx, a.logger, "sync 115 offline tasks", offlineSyncInterval, nil, a.offline.Sync)
-	}()
-	go func() {
-		defer workers.Done()
+	})
+	workers.Go(func() {
 		tasks.RunPeriodic(ctx, a.logger, "monitor", monitorCheckInterval, a.monitors.Pending(), a.monitors.Check)
-	}()
-	go func() {
-		defer workers.Done()
+	})
+	workers.Go(func() {
 		tasks.RunPeriodic(ctx, a.logger, "sync 115 sidecar files", sidecarSyncTickInterval, nil, a.sidecars.Tick)
-	}()
+	})
 
 	serverError := make(chan error, 1)
 	go func() {
@@ -318,37 +312,6 @@ func (a *App) Close() error {
 	}
 	if a.store != nil {
 		return a.store.Close()
-	}
-	return nil
-}
-
-// CheckHealth probes the health of a running server given its listen address.
-func CheckHealth(listen string) error {
-	host, port, err := net.SplitHostPort(listen)
-	if err != nil {
-		return fmt.Errorf("parse health check address: %w", err)
-	}
-	switch host {
-	case "", "0.0.0.0":
-		host = "127.0.0.1"
-	case "::":
-		host = "::1"
-	}
-	client := &http.Client{
-		Timeout: 4 * time.Second,
-		// A local probe must not use proxy environment variables.
-		Transport: &http.Transport{DisableKeepAlives: true},
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	response, err := client.Get("http://" + net.JoinHostPort(host, port) + "/api/health")
-	if err != nil {
-		return fmt.Errorf("check health: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("health check returned HTTP %d", response.StatusCode)
 	}
 	return nil
 }

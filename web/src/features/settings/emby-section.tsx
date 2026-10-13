@@ -8,7 +8,6 @@ import { InlineError } from '@/components/error-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
-import { cn } from 'cn'
 import { combineServerUrl, splitServerUrl } from './emby-url'
 import { SettingRow, SettingsSection } from './shared'
 
@@ -323,13 +322,11 @@ export function EmbySection() {
               disabled={disabled || testConfig.isPending}
               onClick={handleTest}
             >
-              <RefreshCwIcon className={cn('size-3.5', testConfig.isPending && 'animate-spin')} />
+              <RefreshCwIcon className={testConfig.isPending ? 'animate-spin' : undefined} />
               测试连接
             </Button>
             <Button type="button" size="sm" disabled={disabled || !isDirty} onClick={handleSave}>
-              {updateConfig.isPending ? (
-                <LoaderCircleIcon className="mr-1.5 size-3.5 animate-spin" />
-              ) : null}
+              {updateConfig.isPending ? <LoaderCircleIcon className="animate-spin" /> : null}
               保存
             </Button>
           </div>

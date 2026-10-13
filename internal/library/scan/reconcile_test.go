@@ -368,3 +368,80 @@ func TestReconcileSnapshotUsesFilesRemainingAfterScopedCleanup(t *testing.T) {
 		})
 	}
 }
+
+type cleanupNotifier struct {
+	MediaNotifier
+	update func(context.Context, string) error
+}
+
+func (n cleanupNotifier) NotifyUpdated(ctx context.Context, path string) error {
+	return n.update(ctx, path)
+}
+
+func TestReconcileRetriesReassignedExportCleanup(t *testing.T) {
+	run := reconcileFixture(t, 0, 0)
+	ctx := t.Context()
+	run.payload.ObsoleteCodes = []string{"ONSD-340A", "ONSD-340B"}
+	run.payload.Scan.RemovedMovies = 2
+	if err := SaveScanProgress(ctx, run.scanner.db.Task, run.taskID, *run.payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range run.payload.ObsoleteCodes {
+		if err := scrape.ExportEmbyMedia(run.scanner.exportMgr.Config().EmbyDir, "http://localhost", "", code,
+			nfo.Movie{Code: code}, []pan.File{{ID: code, Name: code + ".mp4"}}, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	failure := errors.New("notification unavailable")
+	fail, notifications := true, 0
+	run.scanner.notifier = cleanupNotifier{update: func(context.Context, string) error {
+		notifications++
+		if fail {
+			return failure
+		}
+		return nil
+	}}
+	if err := run.reconcile(ctx); !errors.Is(err, failure) {
+		t.Fatalf("cleanup error = %v", err)
+	}
+	resumed, err := tasks.DecodePayload[domain.ScanPayload](run.scanner.db.Task.GetX(ctx, run.taskID).Payload)
+	if err != nil || resumed.Scan.Stage != "reconciling" || len(resumed.ObsoleteCodes) != 2 {
+		t.Fatalf("cleanup lost its checkpoint: %+v, %v", resumed, err)
+	}
+	run.payload = &resumed
+	fail = false
+	if err := run.reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := tasks.DecodePayload[domain.ScanPayload](run.scanner.db.Task.GetX(ctx, run.taskID).Payload)
+	if err != nil || completed.Scan.Stage != "done" || len(completed.ObsoleteCodes) != 0 || completed.Scan.RemovedMovies != 2 {
+		t.Fatalf("cleanup did not finish: %+v, %v", completed, err)
+	}
+	if notifications != 3 {
+		t.Fatalf("cleanup notifications = %d, want 3 including retry", notifications)
+	}
+	for _, code := range []string{"ONSD-340A", "ONSD-340B"} {
+		if _, err := os.Stat(scrape.EmbyMovieDir(run.scanner.exportMgr.Config().EmbyDir, code)); !os.IsNotExist(err) {
+			t.Fatalf("obsolete export %s remains: %v", code, err)
+		}
+	}
+}
+
+func TestReassignedExportCleanupPreservesRecreatedMovie(t *testing.T) {
+	run := reconcileFixture(t, 0, 0)
+	ctx, code := t.Context(), "ONSD-340A"
+	run.payload.ObsoleteCodes = []string{code}
+	run.scanner.db.Movie.Create().SetCode(code).ExecX(ctx)
+	cfg := run.scanner.exportMgr.Config()
+	if err := scrape.ExportEmbyMedia(cfg.EmbyDir, cfg.PublicURL, "", code,
+		nfo.Movie{Code: code}, []pan.File{{ID: "retained", Name: code + ".mp4"}}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	strm := filepath.Join(scrape.EmbyMovieDir(cfg.EmbyDir, code), code+".strm")
+	if body, err := os.ReadFile(strm); err != nil || !strings.Contains(string(body), "retained") {
+		t.Fatalf("cleanup deleted a recreated movie's export: %s, %v", body, err)
+	}
+}

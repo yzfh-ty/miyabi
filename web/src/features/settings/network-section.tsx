@@ -14,7 +14,6 @@ import { InlineError } from '@/components/error-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
-import { cn } from 'cn'
 import { SettingRow, SettingsSection } from './shared'
 
 export function NetworkSection() {
@@ -132,13 +131,11 @@ export function NetworkSection() {
               disabled={disabled || testNetwork.isPending}
               onClick={handleTest}
             >
-              <RefreshCwIcon className={cn('size-3.5', testNetwork.isPending && 'animate-spin')} />
+              <RefreshCwIcon className={testNetwork.isPending ? 'animate-spin' : undefined} />
               测试连接
             </Button>
             <Button type="button" size="sm" disabled={disabled || !isDirty} onClick={handleSave}>
-              {updateConfig.isPending ? (
-                <LoaderCircleIcon className="mr-1.5 size-3.5 animate-spin" />
-              ) : null}
+              {updateConfig.isPending ? <LoaderCircleIcon className="animate-spin" /> : null}
               保存
             </Button>
           </div>

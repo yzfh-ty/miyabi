@@ -202,6 +202,10 @@ docker rm miyabi
 
 同时感谢社区 [LinuxDO](https://linux.do) 的帮助。
 
+## 联系我们
+
+[Telegram](https://t.me/miyabi_cn)
+
 ## 免责声明
 
 本项目仅供学习、研究和技术交流使用。项目作者与任何第三方服务、原始应用或内容提供方无关。

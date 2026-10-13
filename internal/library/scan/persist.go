@@ -38,7 +38,7 @@ func (r *scanRun) processPageTx(ctx context.Context, tx *ent.Tx, directoryPath s
 			Select(file.FieldID, file.FieldFileID, file.FieldName, file.FieldParentID, file.FieldSize,
 				file.FieldSha1, file.FieldPickCode, file.FieldAccountID, file.FieldRootID, file.FieldPath, file.FieldMovieID).
 			WithMovie(func(q *ent.MovieQuery) {
-				q.Select(movie.FieldID, movie.FieldCode, movie.FieldJavdbID, movie.FieldManualCode)
+				q.Select(movie.FieldID, movie.FieldCode, movie.FieldJavdbID, movie.FieldManualCode, movie.FieldScrapeStatus)
 			}).All(ctx)
 		if err != nil {
 			return fmt.Errorf("load previous file associations: %w", err)
@@ -48,6 +48,13 @@ func (r *scanRun) processPageTx(ctx context.Context, tx *ent.Tx, directoryPath s
 			previousFiles[entry.FileID] = entry
 		}
 		if prepare != nil {
+			for _, video := range videos {
+				old := previousFiles[video.ID]
+				if video.DirectoryCode != "" && old != nil && old.AccountID == r.payload.Source.AccountID &&
+					directoryPartConflict(video.DirectoryCode, video.File, old) {
+					return &domain.RetryError{Cause: domain.E(domain.KindConflict, "影片身份已更新，等待重新识别分段", nil)}
+				}
+			}
 			IdentifyScanVideos(*r.payload, videos, previousFiles)
 			videos = prepare(videos)
 		}
@@ -129,6 +136,7 @@ func (r *scanRun) processPageTx(ctx context.Context, tx *ent.Tx, directoryPath s
 			return err
 		}
 		r.payload.Scan.RemovedMovies += len(removed)
+		r.payload.ObsoleteCodes = append(r.payload.ObsoleteCodes, removed...)
 		if len(videos) > 0 && r.payload.OfflineTaskID != 0 {
 			record, err := tx.OfflineDownload.Get(ctx, r.payload.OfflineTaskID)
 			if err != nil {

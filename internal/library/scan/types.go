@@ -13,4 +13,6 @@ type Video struct {
 	pan.File
 	Code   string
 	Manual bool
+	// DirectoryCode records a provisional part group for transactional validation.
+	DirectoryCode string
 }
