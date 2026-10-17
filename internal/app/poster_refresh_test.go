@@ -60,7 +60,7 @@ func TestScanRefreshesOutdatedPostersOnceWithoutDownloadingCovers(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	posterPath := filepath.Join(scrapePkg.EmbyMovieDir(fixture.embyDir, "ABP-123"), "poster.jpg")
+	posterPath := filepath.Join(export.EmbyMovieDir(fixture.embyDir, "ABP-123"), "poster.jpg")
 	if err := os.WriteFile(posterPath, oldPoster, 0o644); err != nil {
 		t.Fatal(err)
 	}

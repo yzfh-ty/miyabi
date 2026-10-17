@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/ppxb/miyabi/internal/atomicfile"
 	"github.com/ppxb/miyabi/internal/codeid"
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/nfo"
@@ -85,7 +86,7 @@ func RewriteSTRM(ctx context.Context, embyDir, publicURL, strmToken string) (int
 		}
 		newContent := STRMContent(publicURL, fileID, strmToken)
 		if !bytes.Equal(bytes.TrimSpace(data), bytes.TrimSpace(newContent)) {
-			if err := os.WriteFile(path, newContent, 0o644); err != nil {
+			if err := atomicfile.WriteFile(path, newContent, 0o644); err != nil {
 				return fmt.Errorf("rewrite STRM %s: %w", path, err)
 			}
 			rewritten++

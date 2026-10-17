@@ -13,6 +13,7 @@ import (
 	subtitlemeta "github.com/ppxb/miyabi/internal/domain/subtitle"
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/ent/subtitle"
+	"github.com/ppxb/miyabi/internal/export"
 	mediaimage "github.com/ppxb/miyabi/internal/image"
 )
 
@@ -28,7 +29,7 @@ type LocalScanResult struct {
 type LocalScanner struct {
 	db       *ent.Client
 	images   *mediaimage.Cache
-	notifier MediaNotifier
+	notifier export.MediaNotifier
 }
 
 // NewLocalScanner creates a new LocalScanner.
@@ -40,7 +41,7 @@ func NewLocalScanner(db *ent.Client, images *mediaimage.Cache) *LocalScanner {
 }
 
 // SetMediaNotifier sets the notification handler for discovered media folders.
-func (s *LocalScanner) SetMediaNotifier(notifier MediaNotifier) {
+func (s *LocalScanner) SetMediaNotifier(notifier export.MediaNotifier) {
 	s.notifier = notifier
 }
 

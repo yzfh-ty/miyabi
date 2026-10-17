@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ppxb/miyabi/internal/export"
 	scrapePkg "github.com/ppxb/miyabi/internal/library/scrape"
 	"github.com/ppxb/miyabi/internal/tasks"
 )
@@ -66,7 +67,7 @@ func TestScrapeRejectsChangedVideoPositions(t *testing.T) {
 			if fixture.store.Client.Movie.GetX(ctx, input.MovieID).MetadataSnapshot != nil {
 				t.Fatal("invalid video committed a snapshot")
 			}
-			if _, err := os.Stat(filepath.Join(scrapePkg.EmbyMovieDir(fixture.embyDir, "ABP-123"), "ABP-123.strm")); !os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.Join(export.EmbyMovieDir(fixture.embyDir, "ABP-123"), "ABP-123.strm")); !os.IsNotExist(err) {
 				t.Fatalf("invalid video exported STRM: %v", err)
 			}
 		})

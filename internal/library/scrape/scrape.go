@@ -86,7 +86,7 @@ type Service struct {
 	dirCache map[string]dirCacheEntry
 
 	exportMgr     *export.Manager
-	mediaNotifier MediaNotifier
+	mediaNotifier export.MediaNotifier
 }
 
 func (service *Service) exportConfig() export.Config {
@@ -98,7 +98,7 @@ func (service *Service) exportConfig() export.Config {
 
 type Dependencies struct {
 	ExportManager *export.Manager
-	MediaNotifier MediaNotifier
+	MediaNotifier export.MediaNotifier
 	Subtitles     SubtitleExporter
 }
 
@@ -117,18 +117,6 @@ func New(db *ent.Client, d *drive.Drive, metadata MetadataSource, images *mediai
 	}
 	service.subtitleQueue = newSubtitleQueue(service)
 	return service
-}
-
-// SetEmbyExport configures the local Emby export directory, public URL written into .strm files, and optional STRM token.
-func (service *Service) SetEmbyExport(embyDir, publicURL, strmToken string) {
-	if service.exportMgr == nil {
-		service.exportMgr = export.NewManager(export.Config{})
-	}
-	service.exportMgr.Set(export.Config{
-		EmbyDir:   embyDir,
-		PublicURL: publicURL,
-		STRMToken: strmToken,
-	})
 }
 
 // Close releases resources and terminates background workers.

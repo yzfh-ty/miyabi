@@ -131,7 +131,7 @@ func TestRebuildReplacesSavedMetadataAndPublishesNewPreviews(t *testing.T) {
 			if err != nil || len(local.PreviewImages) != 2 || local.Tags[0].Provider != "javdb" {
 				t.Fatalf("local detail not refreshed: %+v %v", local, err)
 			}
-			path := filepath.Join(scrape.EmbyMovieDir(f.embyDir, after.Code), after.Code+".nfo")
+			path := filepath.Join(export.EmbyMovieDir(f.embyDir, after.Code), after.Code+".nfo")
 			body, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)

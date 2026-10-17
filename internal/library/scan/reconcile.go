@@ -29,7 +29,7 @@ const reconcileBatchSize = 100
 
 // ReconcileScan prepares cached exports before atomically committing index
 // cleanup, metadata jobs, Emby notifications and scan completion.
-func ReconcileScan(ctx context.Context, db *ent.Client, taskID int, payload *domain.ScanPayload, images *mediaimage.Cache, tasksSvc *tasks.Service, cfg export.Config, notifier scrape.MediaNotifier) error {
+func ReconcileScan(ctx context.Context, db *ent.Client, taskID int, payload *domain.ScanPayload, images *mediaimage.Cache, tasksSvc *tasks.Service, cfg export.Config, notifier export.MediaNotifier) error {
 	run := scanRun{scanner: &Scanner{db: db, images: images, tasksSvc: tasksSvc, notifier: notifier, exportMgr: export.NewManager(cfg)}, taskID: taskID, payload: payload}
 	return run.reconcile(ctx)
 }
@@ -67,7 +67,7 @@ func (r *scanRun) cleanupReassignedExports(ctx context.Context, cfg export.Confi
 		if exists {
 			continue
 		}
-		dir := scrape.EmbyMovieDir(cfg.EmbyDir, code)
+		dir := export.EmbyMovieDir(cfg.EmbyDir, code)
 		if err := os.RemoveAll(dir); err != nil {
 			return fmt.Errorf("remove reassigned movie export %s: %w", code, err)
 		}
@@ -185,7 +185,7 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 					if preserveExports[code] {
 						continue
 					}
-					movieDir := scrape.EmbyMovieDir(cfg.EmbyDir, code)
+					movieDir := export.EmbyMovieDir(cfg.EmbyDir, code)
 					if err := os.RemoveAll(movieDir); err != nil {
 						cleanupErrors = append(cleanupErrors, fmt.Errorf("remove exported movie %s after commit: %w", code, err))
 						continue
@@ -275,7 +275,7 @@ func (r *scanRun) reconcileTx(ctx context.Context, tx *ent.Tx, cfg export.Config
 				if cfg.EmbyDir != "" && r.scanner.notifier != nil {
 					// Also notify on a retry that finds complete exports: a previous
 					// attempt may have written them before its database commit failed.
-					if err := r.scanner.notifier.NotifyUpdatedTx(ctx, tx, scrape.EmbyMovieDir(cfg.EmbyDir, record.Code)); err != nil {
+					if err := r.scanner.notifier.NotifyUpdatedTx(ctx, tx, export.EmbyMovieDir(cfg.EmbyDir, record.Code)); err != nil {
 						return err
 					}
 				}

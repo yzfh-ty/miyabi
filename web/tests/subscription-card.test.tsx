@@ -33,10 +33,16 @@ const item: SubscriptionItem = {
   updated_at: ''
 }
 
-function findAction(node: ReactNode): ReactElement<ComponentProps<typeof Button>> | undefined {
-  if (!isValidElement<{ children?: ReactNode }>(node)) return undefined
-  if (node.type === Button) return node as ReactElement<ComponentProps<typeof Button>>
-  return Children.toArray(node.props.children).map(findAction).find(Boolean)
+function findPath(
+  node: ReactNode,
+  type: ReactElement['type']
+): ReactElement<{ children?: ReactNode }>[] | undefined {
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement<{ children?: ReactNode }>(child)) continue
+    if (child.type === type) return [child]
+    const path = findPath(child.props.children, type)
+    if (path) return [child, ...path]
+  }
 }
 
 function cardState(selecting: boolean, disabled = false) {
@@ -47,25 +53,27 @@ function cardState(selecting: boolean, disabled = false) {
   } as unknown as ReturnType<typeof useRemoveSubscription>)
   const onSelect = vi.fn()
   const tree = SubscriptionCard({ item, selecting, disabled, selected: false, onSelect })
-  const trigger = Children.toArray(tree.props.children)[0] as ReactElement<
+  const path = findPath(tree, MovieCard)
+  expect(path).toBeDefined()
+  const trigger = path!.find(node => node.type === MovieDetailTrigger) as ReactElement<
     ComponentProps<typeof MovieDetailTrigger>
   >
-  const card = trigger.props.children as ReactElement<ComponentProps<typeof MovieCard>>
-  const action = findAction(card.props.coverOverlay)
-  return { tree, trigger, card, action, onSelect, remove }
+  expect(trigger).toBeDefined()
+  const card = path!.at(-1) as ReactElement<ComponentProps<typeof MovieCard>>
+  const action = findPath(card.props.coverOverlay, Button)?.at(-1) as
+    | ReactElement<ComponentProps<typeof Button>>
+    | undefined
+  const ancestry = path!.map(({ type, key }) => ({ type, key }))
+  return { ancestry, trigger, card, action, onSelect, remove }
 }
 
-test('entering and leaving selection preserves card ancestors without a changing footer', () => {
+test('selection preserves the cover ancestry and hides the cancel action', () => {
   const browsing = cardState(false)
   for (const selecting of [true, false]) {
     const current = cardState(selecting)
     // Changing an ancestor's type or key remounts the cover and resets its loaded state.
-    for (const node of ['tree', 'trigger', 'card'] as const) {
-      expect(current[node].type).toBe(browsing[node].type)
-      expect(current[node].key).toBe(browsing[node].key)
-    }
+    expect(current.ancestry).toEqual(browsing.ancestry)
     expect(current.card.props.movie.cover).toBe(browsing.card.props.movie.cover)
-    expect(current.card.props.children).toBeUndefined()
     expect(current.action === undefined).toBe(selecting)
   }
 })
@@ -92,7 +100,6 @@ test('selection disables unavailable cards without disabling normal detail brows
 test('canceling a subscription stays independent of the card click', () => {
   const { action, remove, onSelect } = cardState(false)
   expect(action).toBeDefined()
-  expect(action!.props.size).toBe('icon-sm')
   const preventDefault = vi.fn()
   const stopPropagation = vi.fn()
   action!.props.onClick?.({

@@ -40,7 +40,7 @@ func TestReconcileSkipsMetadataSyncDirectories(t *testing.T) {
 		if got := run.scanner.db.Task.GetX(ctx, original.ID); string(got.Payload) != string(body) {
 			t.Fatal("reconciliation changed the existing task")
 		}
-		if _, err := os.Stat(scrape.EmbyMovieDir(run.scanner.exportMgr.Config().EmbyDir, film.Code)); !os.IsNotExist(err) {
+		if _, err := os.Stat(export.EmbyMovieDir(run.scanner.exportMgr.Config().EmbyDir, film.Code)); !os.IsNotExist(err) {
 			t.Fatalf("metadata-only movie exported sidecars: %v", err)
 		}
 	}

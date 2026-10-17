@@ -36,7 +36,7 @@ func TestScanRepairsReportedLetterPartsAndExportsInOrder(t *testing.T) {
 		lib.database.File.Create().SetFileID(video.ID).SetName(video.Name).SetSize(video.Size).
 			SetParentID(video.ParentID).SetAccountID(source.AccountID).SetRootID(source.Directory.ID).
 			SetPath("/Movies/onsd-340/" + video.Name).SetMovie(film).ExecX(ctx)
-		if err := scrape.ExportEmbyMedia(cfg.EmbyDir, cfg.PublicURL, "", code, nfo.Movie{Code: code}, []pan.File{video}, nil, nil); err != nil {
+		if _, err := export.WriteMedia(export.Config{EmbyDir: cfg.EmbyDir, PublicURL: cfg.PublicURL, STRMToken: ""}, code, nfo.Movie{Code: code}, []pan.File{video}, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -76,7 +76,7 @@ func TestScanRepairsReportedLetterPartsAndExportsInOrder(t *testing.T) {
 		}
 	}
 	for _, old := range []string{"ONSD-340A", "ONSD-340B"} {
-		if _, err := os.Stat(scrape.EmbyMovieDir(cfg.EmbyDir, old)); !os.IsNotExist(err) {
+		if _, err := os.Stat(export.EmbyMovieDir(cfg.EmbyDir, old)); !os.IsNotExist(err) {
 			t.Fatalf("obsolete export %s remains: %v", old, err)
 		}
 	}
@@ -85,12 +85,12 @@ func TestScanRepairsReportedLetterPartsAndExportsInOrder(t *testing.T) {
 	for _, file := range film.Edges.Files {
 		files = append(files, pan.File{ID: file.FileID, Name: file.Name})
 	}
-	if err := scrape.ExportEmbyMedia(cfg.EmbyDir, cfg.PublicURL, "", film.Code, nfo.Movie{Code: film.Code}, files, nil, nil); err != nil {
+	if _, err := export.WriteMedia(export.Config{EmbyDir: cfg.EmbyDir, PublicURL: cfg.PublicURL, STRMToken: ""}, film.Code, nfo.Movie{Code: film.Code}, files, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	for i, want := range []string{videos[1].ID, videos[0].ID} {
 		name := fmt.Sprintf("ONSD-340-cd%d.strm", i+1)
-		body, err := os.ReadFile(filepath.Join(scrape.EmbyMovieDir(cfg.EmbyDir, film.Code), name))
+		body, err := os.ReadFile(filepath.Join(export.EmbyMovieDir(cfg.EmbyDir, film.Code), name))
 		if err != nil || !strings.Contains(string(body), "/"+want+"\n") {
 			t.Fatalf("incorrect part order in %s: %s, %v", name, body, err)
 		}

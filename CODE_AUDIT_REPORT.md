@@ -5,9 +5,9 @@
 
 ## 1. 审计结论与范围
 
-本次记录 **29 项发现：P1 2 项、P2 17 项、P3 10 项**。其中前端 9 项、后端 12 项、测试 6 项、工程配置 2 项。统计包含维护性改进，不表示存在 29 个独立的运行时故障。
+本报告保留 **28 项发现：P1 2 项、P2 16 项、P3 10 项**。其中前端 9 项、后端 11 项、测试 6 项、工程配置 2 项。统计包含维护性改进，不表示存在 28 个独立的运行时故障。
 
-统计和优先级保留原审计分类；后续整改状态在对应条目中更新。
+统计不含已移除的条目，其余条目保留原审计编号和优先级；后续整改状态在对应条目中更新。
 
 最先处理的是图片代理的目标地址边界，以及演员订阅失败后仍推进游标的问题。两者均已通过隔离的本地验证确认。另已验证 Debug SQL 日志暴露设置值、图片响应缺少字节限制、115 并发限制提前释放，并检查了演员新作查询的 SQLite 执行计划。
 
@@ -16,7 +16,7 @@
 | 优先级 | 含义                                           | 数量 |
 | ------ | ---------------------------------------------- | ---: |
 | P1     | 应优先修复的访问边界或业务数据遗漏问题         |    2 |
-| P2     | 有明确触发条件的可靠性、资源、性能或可用性问题 |   17 |
+| P2     | 有明确触发条件的可靠性、资源、性能或可用性问题 |   16 |
 | P3     | 冗余、组织、样式或测试维护性问题               |   10 |
 
 审查覆盖前端样式、重复实现、职责划分、状态管理、错误处理、性能，以及后端 API、订阅、任务、扫描、元数据、图片、导出、数据库和工程配置；同时加入多余、不必要、重复及与实现过度绑定的测试审查。
@@ -222,35 +222,31 @@ USE TEMP B-TREE FOR ORDER BY
 
 **建议与验收：** 评估增加 (kind, origin_id, release_date, id) 组合索引，先针对该实际查询优化。使用代表性数据核对查询计划、分页结果和写入成本，再决定是否另行优化全部演员视图。本次只验证计划，未进行生产数据压测。
 
-### B08 · P2 · 媒体附件直接覆盖写入，失败可能留下截断文件
+### B08 · P2 · 媒体附件直接覆盖写入，失败可能留下截断文件（已完成）
 
 **位置：** [scrape/export.go:105](E:/ppxb/miyabi/internal/library/scrape/export.go:105)、[export/export.go:81](E:/ppxb/miyabi/internal/export/export.go:81)、[subtitle/service.go:148](E:/ppxb/miyabi/internal/subtitle/service.go:148)。
 
-NFO、STRM、导出图片及字幕使用 os.WriteFile 直接写最终文件。已存在的文件会先被截断；写入中断、磁盘错误或进程退出时，旧内容不能保留。Emby 等独立进程也不受应用内部互斥锁保护，可能在覆盖期间读到半份内容。
+**原问题：** NFO、STRM、导出图片及字幕使用 os.WriteFile 直接写最终文件。已存在的文件会先被截断；写入中断、磁盘错误或进程退出时，旧内容不能保留。Emby 等独立进程也不受应用内部互斥锁保护，可能在覆盖期间读到半份内容。
 
 **影响：** 重建、地址重写等操作可能短暂或持续产生不可读附件。任务重试有机会修复，但不能替代发布时的完整性保护。
 
-**建议与验收：** 同目录临时文件写完并关闭后，再使用适配目标平台的替换方式发布；保留图片/NFO 先于 STRM 的顺序和重复导出不改写相同文件的行为。已有 image.Cache 的临时写入实现可作为一致性参考。验证覆盖失败时旧文件仍完整，以及 Windows/Linux 上的替换行为。
+**处理结果（2026-10-15）：** 三处写入统一使用 internal/atomicfile.WriteFile，在同目录临时文件写完并成功关闭后，通过 os.Rename 替换目标；Windows 使用标准库的 MoveFileEx(REPLACE_EXISTING)。写入或替换失败时清理临时文件并保留旧内容，不预先删除目标文件。保留已有文件权限、指向已有文件的符号链接、新文件的 umask，以及图片/NFO 先于 STRM 的顺序和相同内容不重复改写的行为，未新增依赖。
 
-### B09 · P2 · JSON 请求体没有字节上限和读取期限
+**验证：** Windows 原生与本机已有 Linux 容器中，atomicfile、export、library/scrape、subtitle 四个包的测试均通过。新增测试覆盖新建/覆盖/空内容、写入中途失败不发布半份文件、替换失败清理临时文件、已有读取句柄及失败后重试、权限与符号链接保留；Linux 额外验证 umask。现有测试继续验证导出顺序、增量导出、STRM 地址/Token 重写和字幕复用。未执行浏览器测试。
 
-**位置：** [api/helpers.go:11](E:/ppxb/miyabi/internal/api/helpers.go:11)、[api/auth.go:23](E:/ppxb/miyabi/internal/api/auth.go:23)、[api/auth.go:65](E:/ppxb/miyabi/internal/api/auth.go:65)、[app/app.go:205](E:/ppxb/miyabi/internal/app/app.go:205)。
-
-统一 bindJSON 直接解码 Request.Body，没有 MaxBytesReader。字段的长度、数组数量校验在解码之后执行，不能限制解码阶段分配。HTTP Server 只配置 ReadHeaderTimeout 和 IdleTimeout，没有限制已经收完请求头的 JSON 请求体读取时间。
-
-**影响：** 异常大 JSON 可以在被校验拒绝前大量占用内存；慢速请求体会持续占用处理资源。登录接口虽有限流，单个获准请求仍没有该边界。
-
-**建议与验收：** 按实际最大批量输入给 JSON 路由设置合理字节和读取期限，超限返回可识别错误。将限制限定在 JSON 请求体，保留 SSE 和媒体流的长连接行为；验证正常批量请求、超大输入和慢读取取消。
-
-### B10 · P3 · 导出职责分散，旧转发接口继续维持不必要的依赖
+### B10 · P3 · 导出职责分散，旧转发接口继续维持不必要的依赖（已完成）
 
 **位置：** [scrape/export.go:20](E:/ppxb/miyabi/internal/library/scrape/export.go:20)、[scrape/export.go:87](E:/ppxb/miyabi/internal/library/scrape/export.go:87)、[scrape/scrape.go:122](E:/ppxb/miyabi/internal/library/scrape/scrape.go:122)、[scan/local_ingest.go:75](E:/ppxb/miyabi/internal/library/scan/local_ingest.go:75)。
 
-项目已有 internal/export，scrape 却继续重导出其配置、管理器、常量和函数，并保留无生产调用者的 RewriteSTRM 包装和仅被测试使用的 SetEmbyExport。实际的媒体附件写出又在 scrape/export.go。扫描代码仍通过 scrape 间接调用原本属于 export 的 STRM 解析等能力。
+**原问题：** 项目已有 internal/export，scrape 却继续重导出其配置、管理器、常量和函数，并保留无生产调用者的 RewriteSTRM 包装和仅被测试使用的 SetEmbyExport。实际的媒体附件写出又在 scrape/export.go。扫描代码仍通过 scrape 间接调用原本属于 export 的 STRM 解析等能力。
 
 **影响：** 功能归属需要跨两个包判断，重构后的兼容壳增加维护面；部分测试仅为这些转发层重复运行，详见 T01。
 
 **建议与验收：** 调用方直接使用实际归属包，逐步把文件输出职责集中到 export；刮削保留业务编排与检查点。测试改用已有构造参数注入导出配置，随后删除确认无生产用途的旧包装。保留当前小函数组合，不再加一层 exporter 管理框架。
+
+**处理结果（2026-10-15）：** 媒体附件写出和内部排序迁入 [export/media.go](E:/ppxb/miyabi/internal/export/media.go)，通过 WriteMedia 接收 export.Config 并返回文件变更状态，删除原本只丢弃变更状态的包装。移除 scrape 的导出类型、常量、函数别名、RewriteSTRM 包装和 SetEmbyExport，以及 scan 的 MediaNotifier 转发别名；扫描、刮削、媒体库及测试直接引用 export。scrape 保留保存资料与缓存图片的输入准备、发布事务和检查点，不让 export 反向依赖 scrape。纯文件导出测试迁至 export，字幕任务测试通过现有 Dependencies 注入配置，STRM 重写和解析的重复测试按 T01 删除。未新增依赖或管理层。
+
+**验证：** `go test -mod=readonly ./internal/export ./internal/library/... ./internal/app ./internal/emby` 六个包全部通过，覆盖文件内容、输出顺序、自然排序、分片命名、旧 STRM 清理、增量导出、扫描重试、资料重建和 Emby 通知。静态检索确认无旧转发接口引用，保留 B08 的 atomicfile 写入路径；格式与 diff 检查通过，未执行浏览器测试。
 
 ### B11 · P2 · 持久化元数据缓存过期后没有回收机制
 
@@ -262,27 +258,33 @@ expires_at 只参与是否命中的判断，写入则按 provider/code upsert。
 
 **建议与验收：** 为该缓存制定有界保留策略，按批回收过期行，并根据清理查询评估 expires_at 索引。范围限定为可重取的来源缓存，保留媒体库已经保存的资料快照和有业务用途的历史记录。验证缓存回收后仍能正确重新获取，且不会删除正式影片资料。
 
-### B12 · P2 · 纠正番号时按扩展名清理，无法区分自定义附件
+### B12 · P2 · 纠正番号时按扩展名清理，无法区分自定义附件（已完成）
 
 **位置：** [scrape/rename_export.go:14](E:/ppxb/miyabi/internal/library/scrape/rename_export.go:14)、[scrape/rename_export.go:36](E:/ppxb/miyabi/internal/library/scrape/rename_export.go:36)、[rename_export_test.go:27](E:/ppxb/miyabi/internal/library/scrape/rename_export_test.go:27)。
 
-removePreviousExport 承诺保留用户文件，但会删除旧目录内全部 .strm、.nfo，以及固定名称的海报和背景图。它没有验证附件是否对应旧影片的生成文件名或本项目的 STRM 内容。
+**原问题：** removePreviousExport 承诺保留用户文件，但会删除旧目录内全部 .strm、.nfo，以及固定名称的海报和背景图。它没有验证附件是否对应旧影片的生成文件名或本项目的 STRM 内容。
 
-**影响：** 如果用户在旧导出目录放入 custom.nfo、bonus.strm 等自定义文件，纠正影片番号时也会被删除。当前测试只验证 original.mp4 和 notes.txt 被保留，没有覆盖同扩展名的非生成文件。本项由删除条件静态确认，未对真实导出目录执行清理。
+**原影响：** 如果用户在旧导出目录放入 custom.nfo、bonus.strm 等自定义文件，纠正影片番号时也会被删除。原测试只验证 original.mp4 和 notes.txt 被保留，没有覆盖同扩展名的非生成文件。本项由删除条件静态确认，未对真实导出目录执行清理。
 
 **建议与验收：** 按旧影片明确的生成文件集合及可确认的归属清理，无法确认归属的文件保留；避免仅以扩展名判定所有权。在临时目录加入自定义 NFO/STRM，验证正常旧附件可清理、自定义附件保留，以及操作重放仍幂等。
 
+**处理结果（2026-10-15）：** 清理规则改为精确匹配旧番号经 nfo.FileStem 编码后的 `.nfo`、`.strm` 和 `-cdN.strm`，分片编号必须为无前导零的正整数；固定名称 poster.jpg、fanart.jpg 沿用原清理规则。不符合生成命名规则的附件保留，包括 custom.nfo、bonus.strm、相近番号及带额外后缀的文件。目录跳过、旧目录被其他影片占用时不清理，以及重复执行的行为均保持不变。判定范围限定为导出文件名，未增加文件清单或内容追踪机制。
+
+**验证：** 回归测试在修复前复现自定义附件误删，修复后验证单文件和多分片清理、自定义附件内容保留、相近名称、特殊字符编码、子目录、重复执行和其他影片占用保护。`go test -mod=readonly ./internal/library/... ./internal/app` 四个包全部通过，格式与 diff 检查通过。测试仅使用临时目录，未操作真实导出目录或执行浏览器测试。
+
 ## 4. 多余、重复和不必要测试
 
-### T01 · P3 · STRM 重写与解析测试跨包重复
+### T01 · P3 · STRM 重写与解析测试跨包重复（已完成）
 
 **位置：** [export/export_test.go:15](E:/ppxb/miyabi/internal/export/export_test.go:15)、[export/export_test.go:87](E:/ppxb/miyabi/internal/export/export_test.go:87)、[scrape/export_test.go:209](E:/ppxb/miyabi/internal/library/scrape/export_test.go:209)、[scrape/export_test.go:273](E:/ppxb/miyabi/internal/library/scrape/export_test.go:273)。
 
-两个包中的 TestRewriteSTRM 使用相同目录、文件内容、目标地址、幂等和令牌轮换场景；scrape 的函数只转调 export。TestParseSTRMFileID 的六组输入和断言相同，scrape 版本调用的也是函数别名。export 版本还额外覆盖取消，测试信息更多。
+**原问题：** 两个包中的 TestRewriteSTRM 使用相同目录、文件内容、目标地址、幂等和令牌轮换场景；scrape 的函数只转调 export。TestParseSTRMFileID 的六组输入和断言相同，scrape 版本调用的也是函数别名。export 版本还额外覆盖取消，测试信息更多。
 
 **处理建议：合并并删除重复函数。** 以 internal/export 中的测试为准；清理旧包装后，删除 scrape 中这两个重复测试函数。保留同文件中的媒体附件输出顺序、分片命名、旧 STRM 清理和增量导出测试，这些验证了不同的业务行为。
 
 **收益与边界：** 减少两套几乎相同用例的维护成本；不建议删除整个 scrape/export_test.go，也不把不同业务层的集成测试全部视为重复。
+
+**处理结果与验证（2026-10-15）：** 随 B10 移除 scrape 中的 TestRewriteSTRM 和 TestParseSTRMFileID，保留 export 中包含取消场景的原测试。附件内容、输出顺序、排序、分片命名和旧 STRM 清理测试随实现迁至 export；scrape 的保存资料导出与增量导出测试继续保留。B10 所列六个包测试全部通过。
 
 ### T02 · P3 · 实验性解析器在测试文件内自成一套实现
 
@@ -294,45 +296,53 @@ removePreviousExport 承诺保留用户文件，但会删除旧目录内全部 .
 
 **收益与边界：** 避免测试原型正确被误当成生产流程正确。保留真实调用 Normalize、Parse 的语料测试和有价值的 fixture；它们覆盖真实输入差异，不应随原型一起删掉。
 
-### T03 · P2 · 订阅索引测试复制实现，只验证自己构造的 Map
+### T03 · P2 · 订阅索引测试复制实现，只验证自己构造的 Map（已完成）
 
 **位置：** [subscriptions.test.ts:50](E:/ppxb/miyabi/web/tests/subscriptions.test.ts:50)、[subscriptions.test.ts:61](E:/ppxb/miyabi/web/tests/subscriptions.test.ts:61)、[api/subscriptions.ts:55](E:/ppxb/miyabi/web/src/api/subscriptions.ts:55)。
 
-“超过 100 条且 O(1) 查询”的测试自己构造 150 条数据，自己写 queryFn、staleTime 和 select，再断言自己创建的 Map。它没有调用生产 useSubscriptionTargets 的配置，也没有经过实际 API；即使生产 select 出错或请求重新出现数量截断，该测试仍可能通过。Map.get 的结果断言也不能证明整条路径的复杂度，F03 就未被覆盖。
+**原问题：** “超过 100 条且 O(1) 查询”的测试自己构造 150 条数据，自己写 queryFn、staleTime 和 select，再断言自己创建的 Map。它没有调用生产 useSubscriptionTargets 的配置，也没有经过实际 API；即使生产 select 出错或请求重新出现数量截断，该测试仍可能通过。Map.get 的结果断言也不能证明整条路径的复杂度，F03 就未被覆盖。
 
 **处理建议：重写，不保留复制实现。** 让生产 Hook 与测试共享实际 query options/选择函数，或采用项目现有的捕获真实 Hook 配置方式。替换测试自写的 select，验证真实数据来源、超过 100 条的结果和多消费者处理成本。
 
 **收益与边界：** 删除的是测试中的第二份实现。subscriptionKeys 的层级契约仍有验证价值；无需重复测试 TanStack Query 本身的通用算法。两个查询测试文件中重复的 observe/settled 辅助代码，也可在确有复用时合并成小型测试工具。
 
-### T04 · P3 · 健康检查的成功与 503 用例重复验证同一个函数
+**处理结果（2026-10-15）：** 改为捕获真实 useSubscriptionTargets 的查询配置并交给 QueryObserver 执行，仅在 fetch 边界模拟响应。覆盖影片、演员和全部订阅三种查询，验证真实接口路径、筛选参数、取消信号，以及 150 条结果和第 1、101、150 条索引内容。保留原有缓存失效测试，移除未被验证的 O(1) 表述；多消费者索引构建成本仍归 F03，本项未修改业务实现。
 
-**位置：** [app/app_test.go:56](E:/ppxb/miyabi/internal/app/app_test.go:56)、[cmd/healthcheck_test.go:14](E:/ppxb/miyabi/cmd/miyabi/healthcheck_test.go:14)、[cmd/healthcheck_test.go:57](E:/ppxb/miyabi/cmd/miyabi/healthcheck_test.go:57)、[cmd/healthcheck.go:7](E:/ppxb/miyabi/cmd/miyabi/healthcheck.go:7)。
+**验证：** subscriptions 与 settings-cache 两个文件共 8 项测试通过，TypeScript、目标文件 Lint 与格式检查通过。临时将正式索引截断至 100 条或改为错误接口时，三种查询用例均按预期失败；还原后通过。未安装依赖，未执行浏览器测试。
 
-cmd.checkHealth 仅转调 app.CheckHealth；两边分别建立 HTTP 服务验证正常状态和 503。该部分没有增加独立的边界覆盖。
+### T04 · P3 · 健康检查的成功与 503 用例重复验证同一个函数（已失效）
 
-**处理建议：集中函数用例，保留命令入口测试。** 将 HTTP 探测行为集中在实际函数所属层；cmd 重点保留 healthcheck 子命令读取配置、使用 loopback、不启动应用和不创建数据目录等入口契约。
+**原问题：** cmd.checkHealth 仅转调 app.CheckHealth；两边分别建立 HTTP 服务验证正常状态和 503，没有增加独立的边界覆盖。
 
-**收益与边界：** 无效地址、IPv6、重定向和超时各有独立价值，应保留或迁移。不要因测试耗时就删除唯一的超时验证。
+**核对结果（2026-10-15）：** 健康检查实现、命令入口及对应测试均已删除，本项不再适用，无需恢复功能或迁移旧测试。当前 [cmd/cmd_test.go:8](E:/ppxb/miyabi/cmd/cmd_test.go:8) 验证 healthcheck 参数被拒绝，[removed_routes_test.go:5](E:/ppxb/miyabi/internal/api/removed_routes_test.go:5) 验证 /api/health 未注册；这些是删除功能后的有效约束，应保留。
 
-### T05 · P3 · 部分组件测试锁定内部结构，并手动模拟 React 生命周期
+### T05 · P3 · 部分组件测试锁定内部结构，并手动模拟 React 生命周期（已完成测试清理）
 
 **位置：** [subscription-card.test.tsx:49](E:/ppxb/miyabi/web/tests/subscription-card.test.tsx:49)、[subscription-card.test.tsx:68](E:/ppxb/miyabi/web/tests/subscription-card.test.tsx:68)、[subscription-card.test.tsx:95](E:/ppxb/miyabi/web/tests/subscription-card.test.tsx:95)、[task-events.test.tsx:22](E:/ppxb/miyabi/web/tests/task-events.test.tsx:22)、[task-events.test.tsx:114](E:/ppxb/miyabi/web/tests/task-events.test.tsx:114)。
 
-组件测试直接调用组件函数，按 children 索引取节点，并断言按钮必须为 icon-sm、某个 children 必须为空。SSE 测试通过全局 mock useEffect，再取倒数第二个调用手动 setup/cleanup；这依赖内部 effect 数量和顺序。
+**原问题：** 组件测试直接调用组件函数，按 children 索引取节点，并断言按钮必须为 icon-sm、某个 children 必须为空。SSE 测试通过全局 mock useEffect，再取倒数第二个调用手动 setup/cleanup；这依赖内部 effect 数量和顺序。
 
 **影响：** 无行为变化的包裹层、插槽或 effect 整理可能导致测试失败；手动执行 effect 又不能验证真实 React 的重渲染调度。它们仍能验证部分纯逻辑，不应整体判为无效。
 
 **处理建议：精简装饰性断言和脆弱定位。** 删除与行为目标无关的 size/空 children 断言，减少固定索引访问；网络事件与取消逻辑使用明确的测试入口。保留点击隔离、选择行为、旧响应不能覆盖新快照等有效断言。不要为测试另造 React 运行模型，也不要按此项要求新增业务 aria。
 
-### T06 · P3 · 架构测试的包名单没有覆盖新增元数据模块
+**处理结果（2026-10-15）：** 卡片测试按组件类型查找节点，比较选择前后完整祖先路径的类型和 key，保留封面稳定性、选择、禁用和点击隔离验证，移除 size/空 children 断言。SSE 测试按当前 QueryClient 定位唯一连接 effect，并由测试 spy 捕获真实重连回调，不再依赖 effect 注册顺序。仍以真实 setup/cleanup 验证事件和资源清理逻辑，不声称覆盖 React 的重渲染调度；未改动业务实现或引入测试框架。
+
+**验证：** subscription-card、task-events 和 query-refresh 共 43 项测试通过，TypeScript、目标文件 Lint 与格式检查通过。临时增加静态包裹层、前置同级节点、调整按钮尺寸及插入无关 effect 后，卡片/SSE 的 38 项测试仍通过；仅在选择状态增加包裹层时，封面祖先路径测试按预期失败。临时修改均已还原，未安装依赖，未执行浏览器测试。
+
+### T06 · P3 · 架构测试的包名单没有覆盖新增元数据模块（已完成）
 
 **位置：** [deps_test.go:16](E:/ppxb/miyabi/internal/app/deps_test.go:16)、[deps_test.go:61](E:/ppxb/miyabi/internal/app/deps_test.go:61)、[metadata/service.go:1](E:/ppxb/miyabi/internal/metadata/service.go:1)。
 
-TestBusinessPackagesDoNotImportEachOther 使用手写 business/shared 包名单，并只读取每个目录的直接 Go 文件。metadata 及其 providers 未被纳入检查对象或相应禁用规则；这些包的依赖发生变化时，现有测试可能始终通过。
+**原问题：** TestBusinessPackagesDoNotImportEachOther 使用手写 business/shared 包名单，并只读取每个目录的直接 Go 文件。metadata 及其 providers 未被纳入检查对象或相应禁用规则；这些包的依赖发生变化时，现有测试可能始终通过。
 
 **处理建议：更新覆盖边界，不删除测试。** 将当前真实业务包纳入名单，明确来源适配器的允许依赖。保留已经有意允许的包内关系，不根据目录名称建立一套过宽的禁止规则。
 
 **收益与边界：** 让架构测试约束当前项目结构，而不是只维持重构前的部分目录。该测试成本较低且规则有实际价值，问题是规则陈旧，不是“存在架构测试”本身。
+
+**处理结果（2026-10-15）：** 将 metadata 和 metadata/providers 显式加入 business 名单，同时覆盖它们自身的 import 和其他受检包对它们的依赖。允许 metadata/providers 使用 metadata 和 catalogue，保留原有 library → library/scan → library/scrape 关系；metadata 核心不能反向依赖来源适配器。继续使用现有检查机制，未扩大到所有目录或改动业务实现。
+
+**验证：** TestBusinessPackagesDoNotImportEachOther 通过，gofmt 与 Git 差异检查通过。使用编译后的架构测试读取临时源码，分别验证 metadata → library、metadata/providers → offline、domain → metadata、library → metadata/providers、metadata → metadata/providers 均被规则拒绝；清理临时文件后再次通过。未安装依赖，未执行浏览器测试。
 
 ## 5. 工程配置
 
@@ -346,15 +356,15 @@ TestBusinessPackagesDoNotImportEachOther 使用手写 business/shared 包名单�
 
 **建议与验收：** 为普通变更加入已有检查命令，发布依赖其成功结果；按前后端变更范围控制执行成本。本项只评价仓库内配置，不推断仓库外是否另有 CI 或分支保护。本次没有创建或触发外部工作流。
 
-### C02 · P2 · 运行镜像创建了专用用户，但最终仍默认使用 root
+### C02 · P2 · 运行镜像创建了专用用户，但最终仍默认使用 root（已失效）
 
-**位置：** [Dockerfile:34](E:/ppxb/miyabi/Dockerfile:34)、[Dockerfile:39](E:/ppxb/miyabi/Dockerfile:39)、[Dockerfile:56](E:/ppxb/miyabi/Dockerfile:56)。
+**位置：** [Dockerfile:34](E:/ppxb/miyabi/Dockerfile:34)。
 
-runtime 阶段创建 miyabi 用户并设置目录所有权，却没有 USER 指令。Debian 基础镜像的默认身份因此仍被继承；COPY --chown 只改变文件所有权，不改变运行用户。
+**原问题：** runtime 阶段创建 miyabi 用户并设置目录所有权，但没有 USER 指令，实际继承 Debian 基础镜像的 root 身份。
 
-**影响：** 专用用户配置没有达到预期，进程拥有不必要的权限。
+**处理结果（2026-10-15）：** 用户已明确容器直接使用 root，不再设置独立 miyabi 用户，本项不再适用。移除 groupadd、useradd、目录 chown 和 COPY --chown，保留 /app/data 创建及现有启动配置。
 
-**建议与验收：** 在确认数据卷和 Emby 输出目录的权限后使用专用用户运行。核对新建数据目录、已有挂载目录及健康检查，避免仅添加 USER 就造成历史部署无法写入。本次未构建或启动容器。
+**验证：** 静态检查确认 Dockerfile 不再包含专用用户、用户组或所有权设置，Git 差异检查通过。未安装依赖，未重新构建或启动容器。
 
 ## 6. 本次验证记录
 
@@ -403,16 +413,17 @@ USE TEMP B-TREE FOR ORDER BY
 | 顺序 | 工作范围                                        | 最小验证重点                                                                              |
 | ---- | ----------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | 1    | B01、B02：图片访问边界和漏订问题                | 合法图片仍可获取；错误目标被阻止；失败的子订阅可重试且不重复创建                          |
-| 2    | B03/B04/B05/B08/B09/B12：日志、资源和文件完整性 | 敏感值不进入日志；慢响应不突破并发；超限/取消及时释放；覆盖失败保留旧文件；保留自定义附件 |
+| 2    | B03/B04/B05/B08/B12：日志、资源和文件完整性     | 敏感值不进入日志；慢响应不突破并发；超限/取消及时释放；覆盖失败保留旧文件；保留自定义附件 |
 | 3    | F03/F04/F05/F09、B06/B07/B11：状态与规模问题    | 真实查询配置、异步取消、缓存保留、宽目录树、查询计划和缓存容量                            |
 | 4    | F01/F02/F06/F07/F08、B10、测试整理及 CI         | 遵守业务层无 aria 约定，保留 shadcn 原始实现；导入与构建通过；删除重复测试前迁移独有覆盖  |
 
 测试精简应按以下边界执行：
 
-- **可直接列入合并候选：** T01 的两个重复函数、T04 重复的成功/503 探测场景、T05 与业务目标无关的装饰性断言。
-- **应先迁移或重写：** T02 的独有原型场景、T03 的复制实现、T05 脆弱的 effect 定位。不能先删除，再假设其他测试会覆盖。
+- **已完成：** T01 的两个重复函数已随 B10 删除，独有覆盖已保留；T03 已替换为真实 Hook 查询配置测试；T05 已清理装饰性断言和依赖固定位置的定位；T06 已补齐元数据模块的架构规则。
+- **已失效：** T04 随健康检查功能及对应测试删除而不再适用。
+- **应先迁移或重写：** T02 的独有原型场景。不能先删除，再假设其他测试会覆盖。
 - **应保留：** 请求乱序、取消、令牌刷新、来源切换、任务恢复、事务回滚、幂等导出、编号身份等不同故障窗口的测试。
-- **应修正规则：** T06 的架构名单和 B05 对应的慢响应体并发场景。
+- **应修正规则：** B05 对应的慢响应体并发场景。
 
 尤其应保留 [query-refresh.test.ts](E:/ppxb/miyabi/web/tests/query-refresh.test.ts)、[task-events.test.tsx](E:/ppxb/miyabi/web/tests/task-events.test.tsx)、[token_test.go](E:/ppxb/miyabi/internal/drive/token_test.go)、[concurrency_test.go](E:/ppxb/miyabi/internal/offline/concurrency_test.go)、[scan_regression_test.go](E:/ppxb/miyabi/internal/library/scan_regression_test.go)、[retry_test.go](E:/ppxb/miyabi/internal/tasks/retry_test.go) 中针对具体故障场景的覆盖。它们有相似的准备代码，不等于验证的是同一件事。
 

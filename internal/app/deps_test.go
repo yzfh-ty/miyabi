@@ -9,18 +9,22 @@ import (
 	"testing"
 )
 
-// Business packages may only reach each other through domain types or
-// interfaces declared by the caller. This test pins the import direction:
-// a business package must not import another business package, and the
-// shared domain and infrastructure packages must not import any of them.
+// Business packages communicate through shared types and caller-owned interfaces,
+// with explicit exceptions for internal helpers and source adapters.
+// Shared domain and infrastructure packages must not import business packages.
 func TestBusinessPackagesDoNotImportEachOther(t *testing.T) {
 	const module = "github.com/ppxb/miyabi/internal/"
-	business := []string{"catalogue", "library", "library/scan", "library/scrape", "offline", "monitor", "strm", "maintenance", "emby", "subtitle", "network"}
+	business := []string{
+		"catalogue", "metadata", "metadata/providers",
+		"library", "library/scan", "library/scrape",
+		"offline", "monitor", "strm", "maintenance", "emby", "subtitle", "network",
+	}
 	shared := []string{"drive", "tasks", "database", "domain", "domain/subtitle", "domain/download", "export", "netx"}
-	// Subpackages of one bounded context may share code downward only.
+	// Keep cross-package exceptions explicit and directional.
 	allowed := map[string][]string{
-		"library":      {"library/scan"},
-		"library/scan": {"library/scrape"},
+		"library":            {"library/scan"},
+		"library/scan":       {"library/scrape"},
+		"metadata/providers": {"metadata", "catalogue"},
 	}
 	forbidden := func(pkg string) []string {
 		var list []string

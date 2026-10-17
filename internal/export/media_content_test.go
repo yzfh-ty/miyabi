@@ -1,4 +1,4 @@
-package scrape
+package export
 
 import (
 	"os"
@@ -12,19 +12,11 @@ import (
 
 func TestExportLocalMediaSingleVideo(t *testing.T) {
 	tempDir := t.TempDir()
-	service := &Service{}
-	service.SetEmbyExport(tempDir, "http://192.168.1.50:8080", "my-token")
+	cfg := Config{EmbyDir: tempDir, PublicURL: "http://192.168.1.50:8080", STRMToken: "my-token"}
 
 	doc := nfo.Movie{
 		Code:  "IPX-123",
 		Title: "Test Movie",
-	}
-	input := Payload{
-		MetadataPayload: MetadataPayload{
-			Code:    "IPX-123",
-			MovieID: 1,
-		},
-		Document: doc,
 	}
 
 	videos := []pan.File{
@@ -33,9 +25,9 @@ func TestExportLocalMediaSingleVideo(t *testing.T) {
 	poster := []byte("fake poster data")
 	fanart := []byte("fake fanart data")
 
-	err := ExportEmbyMedia(service.exportConfig().EmbyDir, service.exportConfig().PublicURL, service.exportConfig().STRMToken, input.Code, input.Document, videos, poster, fanart)
+	_, err := WriteMedia(cfg, doc.Code, doc, videos, poster, fanart)
 	if err != nil {
-		t.Fatalf("exportLocalMedia failed: %v", err)
+		t.Fatalf("WriteMedia failed: %v", err)
 	}
 
 	movieDir := filepath.Join(tempDir, "miyabi", "IPX", "IPX-123")
@@ -78,19 +70,11 @@ func TestExportLocalMediaSingleVideo(t *testing.T) {
 
 func TestExportLocalMediaMultiVideo(t *testing.T) {
 	tempDir := t.TempDir()
-	service := &Service{}
-	service.SetEmbyExport(tempDir, "http://127.0.0.1:8080", "")
+	cfg := Config{EmbyDir: tempDir, PublicURL: "http://127.0.0.1:8080", STRMToken: ""}
 
 	doc := nfo.Movie{
 		Code:  "SSIS-456",
 		Title: "Two Disc Movie",
-	}
-	input := Payload{
-		MetadataPayload: MetadataPayload{
-			Code:    "SSIS-456",
-			MovieID: 2,
-		},
-		Document: doc,
 	}
 
 	videos := []pan.File{
@@ -98,9 +82,9 @@ func TestExportLocalMediaMultiVideo(t *testing.T) {
 		{ID: "video-cd2", Name: "SSIS-456-CD2.mp4"},
 	}
 
-	err := ExportEmbyMedia(service.exportConfig().EmbyDir, service.exportConfig().PublicURL, service.exportConfig().STRMToken, input.Code, input.Document, videos, nil, nil)
+	_, err := WriteMedia(cfg, doc.Code, doc, videos, nil, nil)
 	if err != nil {
-		t.Fatalf("exportLocalMedia failed: %v", err)
+		t.Fatalf("WriteMedia failed: %v", err)
 	}
 
 	movieDir := filepath.Join(tempDir, "miyabi", "SSIS", "SSIS-456")
@@ -124,19 +108,11 @@ func TestExportLocalMediaMultiVideo(t *testing.T) {
 
 func TestExportLocalMediaMultiVideoUnsorted(t *testing.T) {
 	tempDir := t.TempDir()
-	service := &Service{}
-	service.SetEmbyExport(tempDir, "http://127.0.0.1:8080", "")
+	cfg := Config{EmbyDir: tempDir, PublicURL: "http://127.0.0.1:8080", STRMToken: ""}
 
 	doc := nfo.Movie{
 		Code:  "SSIS-456",
 		Title: "Two Disc Movie",
-	}
-	input := Payload{
-		MetadataPayload: MetadataPayload{
-			Code:    "SSIS-456",
-			MovieID: 2,
-		},
-		Document: doc,
 	}
 
 	// Pass in reversed order: cd2 first, then cd1
@@ -145,9 +121,9 @@ func TestExportLocalMediaMultiVideoUnsorted(t *testing.T) {
 		{ID: "video-cd1", Name: "SSIS-456-CD1.mp4"},
 	}
 
-	err := ExportEmbyMedia(service.exportConfig().EmbyDir, service.exportConfig().PublicURL, service.exportConfig().STRMToken, input.Code, input.Document, videos, nil, nil)
+	_, err := WriteMedia(cfg, doc.Code, doc, videos, nil, nil)
 	if err != nil {
-		t.Fatalf("exportLocalMedia failed: %v", err)
+		t.Fatalf("WriteMedia failed: %v", err)
 	}
 
 	movieDir := filepath.Join(tempDir, "miyabi", "SSIS", "SSIS-456")

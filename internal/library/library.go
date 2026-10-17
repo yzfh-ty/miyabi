@@ -161,7 +161,7 @@ func (s *Service) MatchingMovies(ctx context.Context, javdbIDs []string, codes [
 }
 
 // SetMediaNotifier binds the library/Emby cycle before task workers start.
-func (s *Service) SetMediaNotifier(notifier scan.MediaNotifier) {
+func (s *Service) SetMediaNotifier(notifier export.MediaNotifier) {
 	s.scanner.SetMediaNotifier(notifier)
 	s.localScanner.SetMediaNotifier(notifier)
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/ent/file"
 	"github.com/ppxb/miyabi/internal/ent/movie"
+	"github.com/ppxb/miyabi/internal/export"
 	mediaimage "github.com/ppxb/miyabi/internal/image"
 	"github.com/ppxb/miyabi/internal/library/scrape"
 	"github.com/ppxb/miyabi/internal/nfo"
@@ -72,7 +73,7 @@ func (s *LocalScanner) prepareMedia(ctx context.Context, rootDir string, media *
 	}
 	if domain.IsSTRM(media.name) {
 		body, _ := os.ReadFile(media.path)
-		media.fileID = scrape.ParseSTRMFileID(string(body))
+		media.fileID = export.ParseSTRMFileID(string(body))
 	}
 	rel, err := filepath.Rel(rootDir, media.path)
 	if err != nil {

@@ -73,7 +73,7 @@ func TestRepeatedScanReusesActiveWorkAndPreservesCompleteExports(t *testing.T) {
 	f.runQueue(t)
 	before := maps.Clone(f.catalogue.calls)
 	stamp := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	dir := scrapePkg.EmbyMovieDir(f.embyDir, "ABP-123")
+	dir := export.EmbyMovieDir(f.embyDir, "ABP-123")
 	files := []string{"ABP-123.nfo", "ABP-123.strm", "poster.jpg", "fanart.jpg"}
 	for _, name := range files {
 		if err := os.Chtimes(filepath.Join(dir, name), stamp, stamp); err != nil {

@@ -20,7 +20,7 @@ import { taskKeys, type Task, type ScanTask } from '@/api/tasks'
 import { TaskEventsProvider, useTaskConnection } from '@/features/tasks/task-events'
 import { offlineSubmission } from './fixtures'
 
-// Capture the production effect so Node tests can drive its setup/cleanup without a browser.
+// Exercise production stream callbacks and disposal; React effect scheduling is outside this fixture.
 vi.mock('react', async importOriginal => ({
   ...(await importOriginal<typeof import('react')>()),
   useEffect: vi.fn()
@@ -97,12 +97,9 @@ function fixture() {
     staleTime: Infinity
   })
   const unsubscribe = observer.subscribe(() => {})
-  let reconnect!: () => void
+  const captureConnection = vi.fn<(connection: ReturnType<typeof useTaskConnection>) => void>()
   function CaptureConnection() {
-    const connection = useTaskConnection()
-    useEffect(() => {
-      reconnect = connection.reconnect
-    }, [connection.reconnect])
+    captureConnection(useTaskConnection())
     return null
   }
   renderToStaticMarkup(
@@ -112,8 +109,13 @@ function fixture() {
       </TaskEventsProvider>
     </QueryClientProvider>
   )
-  const setup = vi.mocked(useEffect).mock.calls.at(-2)![0]
-  vi.mocked(useEffect).mock.calls.at(-1)![0]()
+  // Identify the connection effect by its query client, independent of other effects' order.
+  const connectionEffects = vi
+    .mocked(useEffect)
+    .mock.calls.filter(([, deps]) => deps?.includes(client))
+  expect(connectionEffects).toHaveLength(1)
+  const setup = connectionEffects[0]![0]
+  const { reconnect } = captureConnection.mock.calls.at(-1)![0]
   let cleanup = setup()
   const dispose = () => {
     if (cleanup) cleanup()

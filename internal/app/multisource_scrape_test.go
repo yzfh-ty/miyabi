@@ -100,7 +100,7 @@ func TestTransientImageFailureAutomaticallyResumesSavedMetadata(t *testing.T) {
 	if job.Status != task.StatusDone || job.RetryAt != nil || film.ScrapeStatus != movie.ScrapeStatusDone || source.queries != 1 {
 		t.Fatalf("automatic retry did not reuse metadata: %+v queries=%d", job, source.queries)
 	}
-	if _, err := os.Stat(filepath.Join(scrape.EmbyMovieDir(f.embyDir, "ABP-123"), "ABP-123.nfo")); err != nil {
+	if _, err := os.Stat(filepath.Join(export.EmbyMovieDir(f.embyDir, "ABP-123"), "ABP-123.nfo")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -148,7 +148,7 @@ func TestScrapeDoesNotExportFilesRemovedByConcurrentScan(t *testing.T) {
 	if !removed || !domain.IsKind(err, domain.KindConflict) {
 		t.Fatalf("stale export was accepted: %v removed=%v", err, removed)
 	}
-	if _, err := os.Stat(scrape.EmbyMovieDir(f.embyDir, "ABP-123")); !os.IsNotExist(err) {
+	if _, err := os.Stat(export.EmbyMovieDir(f.embyDir, "ABP-123")); !os.IsNotExist(err) {
 		t.Fatalf("stale sidecars created: %v", err)
 	}
 }
@@ -210,7 +210,7 @@ func TestSharedRunningScrapeRecoversWhenRescanAddsAPart(t *testing.T) {
 		t.Fatalf("shared task did not recover: %+v", got)
 	}
 	for _, name := range []string{"ABP-123-cd1.strm", "ABP-123-cd2.strm"} {
-		if _, err := os.Stat(filepath.Join(scrape.EmbyMovieDir(f.embyDir, "ABP-123"), name)); err != nil {
+		if _, err := os.Stat(filepath.Join(export.EmbyMovieDir(f.embyDir, "ABP-123"), name)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -310,7 +310,7 @@ func TestMultiSourceScrapeWithoutJavDBResumesAfterImageFailure(t *testing.T) {
 	if source.queries != 1 || len(f.catalogue.calls) != 0 {
 		t.Fatalf("retry re-queried metadata or JavDB: %d %v", source.queries, f.catalogue.calls)
 	}
-	body, err := os.ReadFile(filepath.Join(scrape.EmbyMovieDir(f.embyDir, "ABP-123"), "ABP-123.nfo"))
+	body, err := os.ReadFile(filepath.Join(export.EmbyMovieDir(f.embyDir, "ABP-123"), "ABP-123.nfo"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ppxb/miyabi/internal/ent"
+	"github.com/ppxb/miyabi/internal/export"
 	mediaimage "github.com/ppxb/miyabi/internal/image"
 	"github.com/ppxb/miyabi/internal/nfo"
 )
@@ -34,7 +35,7 @@ func TestIncrementalExportOnlyWritesChangedFiles(t *testing.T) {
 			if changed, err := ExportLocalMovie(root, host, token, record, images); err != nil || !changed {
 				t.Fatalf("initial export: %v %v", changed, err)
 			}
-			dir := EmbyMovieDir(root, doc.Code)
+			dir := export.EmbyMovieDir(root, doc.Code)
 			stamp := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 			for _, name := range files {
 				if err := os.Chtimes(filepath.Join(dir, name), stamp, stamp); err != nil {

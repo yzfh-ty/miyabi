@@ -107,7 +107,7 @@ func (service *Service) publishMovie(ctx context.Context, sess drive.Session, jo
 				service.dirMu.Unlock()
 				return &domain.RetryError{Cause: domain.E(domain.KindConflict, "媒体文件索引已更新，等待重新导出", nil)}
 			}
-			if err := ExportEmbyMedia(cfg.EmbyDir, cfg.PublicURL, cfg.STRMToken, input.Code, input.Document, videos, poster, fanart); err != nil {
+			if _, err := export.WriteMedia(cfg, input.Code, input.Document, videos, poster, fanart); err != nil {
 				return err
 			}
 			oldDir, err := service.removePreviousExport(ctx, cfg.EmbyDir, record, input.Code)
@@ -133,7 +133,7 @@ func (service *Service) publishMovie(ctx context.Context, sess drive.Session, jo
 							return err
 						}
 					}
-					return service.mediaNotifier.NotifyUpdatedTx(ctx, tx, EmbyMovieDir(cfg.EmbyDir, input.Code))
+					return service.mediaNotifier.NotifyUpdatedTx(ctx, tx, export.EmbyMovieDir(cfg.EmbyDir, input.Code))
 				}
 				return nil
 			})
@@ -159,7 +159,7 @@ func (service *Service) subtitleTask(input MetadataPayload, videos []pan.File) *
 	return &SubtitleTask{
 		MovieID: input.MovieID,
 		Target: subtitlemeta.Target{
-			Dir:           EmbyMovieDir(service.exportConfig().EmbyDir, input.Code),
+			Dir:           export.EmbyMovieDir(service.exportConfig().EmbyDir, input.Code),
 			Stem:          nfo.FileStem(input.Code),
 			Code:          input.Code,
 			Uncensored:    subtitlemeta.IsUncensored(videos[0].Name),

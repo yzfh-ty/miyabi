@@ -36,13 +36,10 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 10001 miyabi \
-    && useradd --uid 10001 --gid miyabi --create-home --home-dir /app miyabi \
-    && mkdir -p /app/data \
-    && chown miyabi:miyabi /app/data
+    && mkdir -p /app/data
 
 WORKDIR /app
-COPY --from=server-builder --chown=miyabi:miyabi /out/miyabi /app/miyabi
+COPY --from=server-builder /out/miyabi /app/miyabi
 COPY LICENSE /app/LICENSE
 
 ENV MIYABI_LISTEN=":8080" MIYABI_DATA_DIR="/app/data" MIYABI_LOG_LEVEL="info"

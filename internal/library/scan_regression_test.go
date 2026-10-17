@@ -17,7 +17,6 @@ import (
 	"github.com/ppxb/miyabi/internal/ent/task"
 	"github.com/ppxb/miyabi/internal/export"
 	"github.com/ppxb/miyabi/internal/library/scan"
-	"github.com/ppxb/miyabi/internal/library/scrape"
 	"github.com/ppxb/miyabi/internal/pan"
 	"github.com/ppxb/miyabi/internal/tasks"
 )
@@ -418,7 +417,7 @@ func TestReconcileRollbackKeepsExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	dir := scrape.EmbyMovieDir(root, "ABP-001")
+	dir := export.EmbyMovieDir(root, "ABP-001")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}

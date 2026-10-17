@@ -14,8 +14,8 @@ import (
 	"github.com/ppxb/miyabi/internal/ent/file"
 	"github.com/ppxb/miyabi/internal/ent/movie"
 	"github.com/ppxb/miyabi/internal/ent/subtitle"
+	"github.com/ppxb/miyabi/internal/export"
 	mediaimage "github.com/ppxb/miyabi/internal/image"
-	"github.com/ppxb/miyabi/internal/library/scrape"
 	"github.com/ppxb/miyabi/internal/nfo"
 	"github.com/ppxb/miyabi/internal/pan"
 )
@@ -40,7 +40,7 @@ func TestExportedPreviewsAndCatalogueEntitiesSurviveLocalRescan(t *testing.T) {
 		SelectedImage: domain.ImageCandidate{Provider: "fanza", Role: "cover", URL: "https://official.example/cover.jpg", Layout: domain.CoverJacket, Width: 2184, Height: 1468},
 	}
 	root := t.TempDir()
-	if err := scrape.ExportEmbyMedia(root, "http://localhost:8080", "", doc.Code, doc,
+	if _, err := export.WriteMedia(export.Config{EmbyDir: root, PublicURL: "http://localhost:8080", STRMToken: ""}, doc.Code, doc,
 		[]pan.File{{ID: "preview-video", Name: doc.Code + ".mp4"}}, testJPEG(t), testJPEG(t)); err != nil {
 		t.Fatal(err)
 	}

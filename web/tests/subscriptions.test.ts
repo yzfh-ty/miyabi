@@ -1,14 +1,33 @@
 import assert from 'node:assert/strict'
-import { test, onTestFinished } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { beforeEach, test, onTestFinished, vi } from 'vitest'
 import {
   QueryClient,
   QueryObserver,
+  useQuery,
   type QueryObserverOptions,
   type QueryObserverResult,
   type QueryKey
 } from '@tanstack/react-query'
 
-import { subscriptionKeys, SUBSCRIPTION_PAGE_SIZE } from '@/api/subscriptions'
+import {
+  subscriptionKeys,
+  SUBSCRIPTION_PAGE_SIZE,
+  useSubscriptionTargets,
+  type SubscriptionTarget
+} from '@/api/subscriptions'
+
+// Run the hook's actual query options through QueryObserver without a browser.
+vi.mock('@tanstack/react-query', async importOriginal => ({
+  ...(await importOriginal<typeof import('@tanstack/react-query')>()),
+  useQuery: vi.fn()
+}))
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.stubGlobal('window', { location: { origin: 'http://localhost' } })
+})
 
 function createTestClient() {
   const client = new QueryClient({
@@ -22,9 +41,9 @@ function createTestClient() {
   return client
 }
 
-function observe<TQuery, TData = TQuery, TKey extends QueryKey = QueryKey>(
+function observe<TQuery, TError = Error, TData = TQuery, TKey extends QueryKey = QueryKey>(
   client: QueryClient,
-  options: QueryObserverOptions<TQuery, Error, TData, TQuery, TKey>
+  options: QueryObserverOptions<TQuery, TError, TData, TQuery, TKey>
 ) {
   const observer = new QueryObserver(client, options)
   const unsubscribe = observer.subscribe(() => {})
@@ -32,13 +51,13 @@ function observe<TQuery, TData = TQuery, TKey extends QueryKey = QueryKey>(
   return observer
 }
 
-function settled<TQuery, TData, TKey extends QueryKey>(
-  observer: QueryObserver<TQuery, Error, TData, TQuery, TKey>
+function settled<TQuery, TError, TData, TKey extends QueryKey>(
+  observer: QueryObserver<TQuery, TError, TData, TQuery, TKey>
 ) {
   if (observer.getCurrentResult().fetchStatus === 'idle') {
     return Promise.resolve(observer.getCurrentResult())
   }
-  return new Promise<QueryObserverResult<TData, Error>>(resolve => {
+  return new Promise<QueryObserverResult<TData, TError>>(resolve => {
     const unsubscribe = observer.subscribe(result => {
       if (result.fetchStatus !== 'idle') return
       unsubscribe()
@@ -47,41 +66,53 @@ function settled<TQuery, TData, TKey extends QueryKey>(
   })
 }
 
-test('subscription targets indexes more than 100 items with O(1) map lookup', async () => {
-  const client = createTestClient()
-
-  // Generate 150 subscription targets (beyond old 100 limit)
-  const mockTargets = Array.from({ length: 150 }, (_, i) => ({
-    id: i + 1,
-    kind: 'movie',
-    target_id: `movie-${i + 1}`,
-    status: i % 2 === 0 ? 'waiting' : 'added'
-  }))
-
-  const observer = observe(client, {
-    queryKey: subscriptionKeys.targets('movie'),
-    queryFn: () => mockTargets,
-    staleTime: Infinity,
-    select: targets => {
-      const map = new Map<string, (typeof targets)[number]>()
-      for (const item of targets) {
-        map.set(item.target_id, item)
+test.each([
+  { kind: 'movie', path: '/api/subscriptions/targets?kind=movie' },
+  { kind: 'actor', path: '/api/subscriptions/targets?kind=actor' },
+  { kind: undefined, path: '/api/subscriptions/targets' }
+] as const)(
+  'subscription targets from $path retain and index more than 100 items',
+  async ({ kind, path }) => {
+    const client = createTestClient()
+    const mockTargets: SubscriptionTarget[] = Array.from({ length: 150 }, (_, i) => {
+      const targetKind = kind ?? (i % 2 === 0 ? 'movie' : 'actor')
+      return {
+        id: i + 1,
+        kind: targetKind,
+        target_id: `${targetKind}-${i + 1}`,
+        status: targetKind === 'actor' ? 'active' : i % 2 === 0 ? 'waiting' : 'added'
       }
-      return { list: targets, map }
+    })
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockImplementation(async () => Response.json(mockTargets))
+    vi.stubGlobal('fetch', fetch)
+
+    function Targets() {
+      useSubscriptionTargets(kind)
+      return null
     }
-  })
+    renderToStaticMarkup(createElement(Targets))
+    const options = vi.mocked(useQuery).mock.calls.at(-1)![0]
+    assert.deepEqual(options.queryKey, subscriptionKeys.targets(kind))
 
-  const result = await settled(observer)
-  assert.ok(result.data)
-  assert.equal(result.data.list.length, 150)
-  assert.equal(result.data.map.size, 150)
+    const observer = observe(client, options)
+    const result = await settled(observer)
+    assert.equal(fetch.mock.calls.length, 1)
+    assert.equal(fetch.mock.calls[0]![0], path)
+    assert.ok(fetch.mock.calls[0]![1]?.signal instanceof AbortSignal)
+    const data = result.data as ReturnType<typeof useSubscriptionTargets>['data']
+    assert.ok(data)
+    assert.deepEqual(data.list, mockTargets)
+    assert.equal(data.map.size, 150)
 
-  // Check 1st item and 101st item and 150th item
-  assert.equal(result.data.map.get('movie-1')?.status, 'waiting')
-  assert.equal(result.data.map.get('movie-101')?.status, 'waiting')
-  assert.equal(result.data.map.get('movie-150')?.status, 'added')
-  assert.equal(result.data.map.get('movie-nonexistent'), undefined)
-})
+    for (const index of [0, 100, 149]) {
+      const target = mockTargets[index]!
+      assert.deepEqual(data.map.get(target.target_id), target)
+    }
+    assert.equal(data.map.get('missing-target'), undefined)
+  }
+)
 
 test('subscriptionKeys.all invalidates all target and paginated list queries', async () => {
   const client = createTestClient()

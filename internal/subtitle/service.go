@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ppxb/miyabi/internal/atomicfile"
 	subtitlemeta "github.com/ppxb/miyabi/internal/domain/subtitle"
 	"github.com/ppxb/miyabi/internal/ent"
 	"github.com/ppxb/miyabi/internal/ent/subtitle"
@@ -149,7 +150,7 @@ func writeFile(name string, body []byte) error {
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 		return fmt.Errorf("create subtitle directory: %w", err)
 	}
-	if err := os.WriteFile(name, body, 0o644); err != nil {
+	if err := atomicfile.WriteFile(name, body, 0o644); err != nil {
 		return fmt.Errorf("write subtitle: %w", err)
 	}
 	return nil

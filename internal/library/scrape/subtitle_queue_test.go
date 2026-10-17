@@ -8,6 +8,7 @@ import (
 	"testing/synctest"
 
 	subtitlemeta "github.com/ppxb/miyabi/internal/domain/subtitle"
+	"github.com/ppxb/miyabi/internal/export"
 	"github.com/ppxb/miyabi/internal/pan"
 )
 
@@ -115,10 +116,13 @@ func TestSubtitleQueue_GracefulShutdown(t *testing.T) {
 }
 
 func TestSubtitleTaskTargetsTheExportedSTRM(t *testing.T) {
-	service := &Service{subtitles: subtitleExporterFunc(func(context.Context, int, subtitlemeta.Target) (int, error) {
-		return 0, nil
-	})}
-	service.SetEmbyExport("emby", "", "")
+	service := New(nil, nil, nil, nil, nil, Dependencies{
+		ExportManager: export.NewManager(export.Config{EmbyDir: "emby"}),
+		Subtitles: subtitleExporterFunc(func(context.Context, int, subtitlemeta.Target) (int, error) {
+			return 0, nil
+		}),
+	})
+	t.Cleanup(service.Close)
 	input := MetadataPayload{MovieID: 7, Code: "SSIS-589"}
 
 	task := service.subtitleTask(input, []pan.File{{ID: "video", Name: "SSIS-589-UC.mp4"}})

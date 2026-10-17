@@ -203,7 +203,7 @@ func TestReconcilePagesPreparationWithoutHoldingDatabaseWriter(t *testing.T) {
 		seen[input.MovieID] = true
 	}
 	for _, code := range []string{"TEST-000", "TEST-100", "TEST-200"} {
-		if _, err := os.Stat(filepath.Join(scrape.EmbyMovieDir(run.scanner.exportMgr.Config().EmbyDir, code), code+".strm")); err != nil {
+		if _, err := os.Stat(filepath.Join(export.EmbyMovieDir(run.scanner.exportMgr.Config().EmbyDir, code), code+".strm")); err != nil {
 			t.Fatalf("missing export %s: %v", code, err)
 		}
 	}
@@ -238,7 +238,7 @@ func TestReconcileRetryNotifiesExportsWrittenBeforeFailedCommit(t *testing.T) {
 		run.scanner.db.EmbyNotification.Query().CountX(ctx) != 0 || len(work) != 0 {
 		t.Fatal("failed transaction retained children or notifications")
 	}
-	exported := filepath.Join(scrape.EmbyMovieDir(run.scanner.exportMgr.Config().EmbyDir, "TEST-000"), "TEST-000.strm")
+	exported := filepath.Join(export.EmbyMovieDir(run.scanner.exportMgr.Config().EmbyDir, "TEST-000"), "TEST-000.strm")
 	before, err := os.Stat(exported)
 	if err != nil {
 		t.Fatalf("export did not precede database commit: %v", err)
@@ -346,7 +346,7 @@ func TestReconcileSnapshotUsesFilesRemainingAfterScopedCleanup(t *testing.T) {
 			if got := run.scanner.db.Task.Query().Where(task.TypeEQ("scrape")).CountX(ctx); got != 0 {
 				t.Fatal("stale or foreign files invalidated a reusable snapshot")
 			}
-			dir := scrape.EmbyMovieDir(run.scanner.exportMgr.Config().EmbyDir, film.Code)
+			dir := export.EmbyMovieDir(run.scanner.exportMgr.Config().EmbyDir, film.Code)
 			entries, err := os.ReadDir(dir)
 			if err != nil {
 				t.Fatal(err)
@@ -370,7 +370,7 @@ func TestReconcileSnapshotUsesFilesRemainingAfterScopedCleanup(t *testing.T) {
 }
 
 type cleanupNotifier struct {
-	MediaNotifier
+	export.MediaNotifier
 	update func(context.Context, string) error
 }
 
@@ -387,7 +387,7 @@ func TestReconcileRetriesReassignedExportCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, code := range run.payload.ObsoleteCodes {
-		if err := scrape.ExportEmbyMedia(run.scanner.exportMgr.Config().EmbyDir, "http://localhost", "", code,
+		if _, err := export.WriteMedia(export.Config{EmbyDir: run.scanner.exportMgr.Config().EmbyDir, PublicURL: "http://localhost", STRMToken: ""}, code,
 			nfo.Movie{Code: code}, []pan.File{{ID: code, Name: code + ".mp4"}}, nil, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -421,7 +421,7 @@ func TestReconcileRetriesReassignedExportCleanup(t *testing.T) {
 		t.Fatalf("cleanup notifications = %d, want 3 including retry", notifications)
 	}
 	for _, code := range []string{"ONSD-340A", "ONSD-340B"} {
-		if _, err := os.Stat(scrape.EmbyMovieDir(run.scanner.exportMgr.Config().EmbyDir, code)); !os.IsNotExist(err) {
+		if _, err := os.Stat(export.EmbyMovieDir(run.scanner.exportMgr.Config().EmbyDir, code)); !os.IsNotExist(err) {
 			t.Fatalf("obsolete export %s remains: %v", code, err)
 		}
 	}
@@ -433,14 +433,14 @@ func TestReassignedExportCleanupPreservesRecreatedMovie(t *testing.T) {
 	run.payload.ObsoleteCodes = []string{code}
 	run.scanner.db.Movie.Create().SetCode(code).ExecX(ctx)
 	cfg := run.scanner.exportMgr.Config()
-	if err := scrape.ExportEmbyMedia(cfg.EmbyDir, cfg.PublicURL, "", code,
+	if _, err := export.WriteMedia(export.Config{EmbyDir: cfg.EmbyDir, PublicURL: cfg.PublicURL, STRMToken: ""}, code,
 		nfo.Movie{Code: code}, []pan.File{{ID: "retained", Name: code + ".mp4"}}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := run.reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	strm := filepath.Join(scrape.EmbyMovieDir(cfg.EmbyDir, code), code+".strm")
+	strm := filepath.Join(export.EmbyMovieDir(cfg.EmbyDir, code), code+".strm")
 	if body, err := os.ReadFile(strm); err != nil || !strings.Contains(string(body), "retained") {
 		t.Fatalf("cleanup deleted a recreated movie's export: %s, %v", body, err)
 	}
