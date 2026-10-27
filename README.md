@@ -68,6 +68,7 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
+      # 使用反向代理时可改为 "127.0.0.1:8080:8080"，仅监听宿主机回环地址
       - "8080:8080"
       - "8099:8099"
     volumes:
@@ -113,6 +114,12 @@ docker rm miyabi
 ```
 
 然后重新执行上面的 `docker run` 命令，沿用原访问密码、数据目录和端口映射。使用已发布镜像时，先拉取所选版本，再按对应部署方式重新创建容器。
+
+使用已发布镜像并通过 Docker Compose 部署时，在 Compose 目录下执行：
+
+```bash
+docker compose pull && docker compose up -d
+```
 
 ## 115 目录与 Emby 媒体库
 
@@ -180,6 +187,8 @@ docker rm miyabi
 | `MIYABI_STRM_TOKEN`      | STRM 播放直链访问鉴权 Token                           | 空，未启用 Token 鉴权                         |
 | `MIYABI_JWT_SECRET`      | Web 登录令牌的签名密钥                               | 空，按访问密码推导                           |
 | `MIYABI_TRUSTED_PROXIES` | 可信 HTTP 代理 IP/CIDR，多个值使用逗号分隔           | 空，不信任代理转发的客户端 IP                |
+
+部署在 nginx 等反向代理后面时，需将反向代理连接 Miyabi 时使用的 IP 填入 `MIYABI_TRUSTED_PROXIES`，以便正确识别客户端 IP。
 
 > [!TIP]
 > Emby 相关配置（服务器地址、API Key、媒体库路径等）除通过环境变量在容器初始化时配置外，也可以在服务启动后随时通过 Web 界面「设置」→「Emby」中进行可视化配置与连通性测试。
